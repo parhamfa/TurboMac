@@ -93,7 +93,11 @@ installs only under `/Library`, `/usr/local`, and the TurboMac application-
 support directory, validates the bundle, and rebuilds the AuxKC. It never edits
 `/System/Library` and never reboots automatically. If a rebuild fails, it puts
 the original files back and attempts to rebuild their collections before
-refusing to proceed. `Deploy/rollback.sh` moves
+refusing to proceed. macOS return code 27 is handled separately because it is
+the expected user-approval gate, not a linker failure: the new files remain
+staged and the installer tells the operator to approve TurboMac and run
+`sudo /usr/local/libexec/turbomac-finalize-passive` before rebooting.
+`Deploy/rollback.sh` moves
 new files into a recoverable directory, restores the captured KEXT, and rebuilds
 the AuxKC. The scripts use the documented `kmutil load` staging flow so
 `kernelmanagerd` rebuilds only the auxiliary collection; they do not invoke the

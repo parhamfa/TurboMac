@@ -82,6 +82,7 @@ package: sign
 	install -m 0755 "$(RELEASE)/turbomacctl" "$(PACKAGE)/usr/local/bin/turbomacctl"
 	install -m 0755 "$(RELEASE)/turbomacd" "$(PACKAGE)/usr/local/libexec/turbomacd"
 	install -m 0755 "$(RELEASE)/turbomac-avx2-load" "$(PACKAGE)/usr/local/libexec/turbomac-avx2-load"
+	install -m 0755 Deploy/finalize-passive.sh "$(PACKAGE)/usr/local/libexec/turbomac-finalize-passive"
 
 verify: package
 	plutil -lint "$(KEXT)/Contents/Info.plist" Deploy/com.parham.turbomacd.plist

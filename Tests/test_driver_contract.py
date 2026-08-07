@@ -6,6 +6,8 @@ root = Path(__file__).resolve().parents[1]
 driver = (root / "TurboMac" / "TurboMac.cpp").read_text()
 client = (root / "TurboMac" / "TurboMacUserClient.cpp").read_text()
 validation = (root / "Deploy" / "whisper-validation.example").read_text()
+installer = (root / "Deploy" / "install-passive.sh").read_text()
+finalizer = (root / "Deploy" / "finalize-passive.sh").read_text()
 with (root / "TurboMac" / "Info.plist").open("rb") as plist_file:
     driver_info = plistlib.load(plist_file)
 
@@ -38,6 +40,12 @@ assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation
 assert "--no-gpu" in validation
+assert 'KEXT_POLICY_EXIT=27' in installer
+assert 'pending-kext-operation' in installer
+assert 'INSTALL_COMPLETE=1' in installer
+assert 'grep -F "$bundle_id"' in installer
+assert 'KEXT_POLICY_EXIT=27' in finalizer
+assert 'do not reboot' in finalizer
 assert driver_info["OSBundleLibraries"] == {
     "com.apple.kpi.iokit": "20.0.0",
     "com.apple.kpi.libkern": "20.0.0",

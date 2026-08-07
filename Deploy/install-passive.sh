@@ -16,11 +16,14 @@ STATE_ROOT="/Library/Application Support/TurboMac"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="$STATE_ROOT/rollback/$STAMP"
 INSTALL_COMPLETE=0
+KEXT_POLICY_EXIT=27
 
 rebuild_collections() {
+  local bundle_id
+  bundle_id="$(defaults read "$KEXT_TARGET/Contents/Info" CFBundleIdentifier)"
   kmutil load --bundle-path "$KEXT_TARGET"
   kmutil inspect -A /Library/KernelCollections/AuxiliaryKernelExtensions.kc \
-    --show-kext-uuids | grep -F "com.parham.turbomac.driver" >/dev/null
+    --show-kext-uuids | grep -F "$bundle_id" >/dev/null
 }
 
 restore_failed_install() {
@@ -43,6 +46,7 @@ restore_failed_install() {
     /Library/Extensions/TurboMac.kext \
     /usr/local/libexec/turbomacd \
     /usr/local/libexec/turbomac-avx2-load \
+    /usr/local/libexec/turbomac-finalize-passive \
     /usr/local/bin/turbomacctl \
     /Library/LaunchDaemons/com.parham.turbomacd.plist; do
     if [[ -e "$target" ]]; then
@@ -58,6 +62,7 @@ restore_failed_install() {
   for target in \
     /usr/local/libexec/turbomacd \
     /usr/local/libexec/turbomac-avx2-load \
+    /usr/local/libexec/turbomac-finalize-passive \
     /usr/local/bin/turbomacctl \
     /Library/LaunchDaemons/com.parham.turbomacd.plist; do
     local saved
@@ -115,6 +120,7 @@ fi
 for target in \
   /usr/local/libexec/turbomacd \
   /usr/local/libexec/turbomac-avx2-load \
+  /usr/local/libexec/turbomac-finalize-passive \
   /usr/local/bin/turbomacctl \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   if [[ -e "$target" ]]; then
@@ -132,19 +138,46 @@ install -d -m 0755 -o root -g wheel /usr/local/bin /usr/local/libexec
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/bin/turbomacctl" /usr/local/bin/turbomacctl
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomacd" /usr/local/libexec/turbomacd
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomac-avx2-load" /usr/local/libexec/turbomac-avx2-load
+install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomac-finalize-passive" /usr/local/libexec/turbomac-finalize-passive
 install -m 0644 -o root -g wheel "$PACKAGE_DIR/Library/LaunchDaemons/com.parham.turbomacd.plist" /Library/LaunchDaemons/com.parham.turbomacd.plist
 
 codesign --verify --strict --verbose=4 "$KEXT_TARGET"
 kmutil print-diagnostics -a x86_64 -z -p "$KEXT_TARGET"
-rebuild_collections
+
+set +e
+kmutil load --bundle-path "$KEXT_TARGET"
+KMUTIL_STATUS=$?
+set -e
+if [[ "$KMUTIL_STATUS" -ne 0 && "$KMUTIL_STATUS" -ne "$KEXT_POLICY_EXIT" ]]; then
+  exit "$KMUTIL_STATUS"
+fi
 
 find "$KEXT_TARGET" -type f -exec shasum -a 256 {} \; >"$BACKUP_DIR/new-sha256.txt"
+echo "$BACKUP_DIR" >"$STATE_ROOT/latest-rollback-path"
+chmod 0600 "$STATE_ROOT/latest-rollback-path"
+
+if [[ "$KMUTIL_STATUS" -eq "$KEXT_POLICY_EXIT" ]]; then
+  {
+    echo "install"
+    echo "com.parham.turbomac.driver"
+    echo "$BACKUP_DIR"
+  } >"$STATE_ROOT/pending-kext-operation"
+  chmod 0600 "$STATE_ROOT/pending-kext-operation"
+  INSTALL_COMPLETE=1
+  echo "Passive governor files staged; macOS user approval is required."
+  echo "Approve TurboMac in Privacy & Security, do not reboot, then run:"
+  echo "  sudo /usr/local/libexec/turbomac-finalize-passive"
+  echo "Rollback: $BACKUP_DIR"
+  exit 0
+fi
+
+kmutil inspect -A /Library/KernelCollections/AuxiliaryKernelExtensions.kc \
+  --show-kext-uuids | grep -F "com.parham.turbomac.driver" >/dev/null
 shasum -a 256 /Library/KernelCollections/AuxiliaryKernelExtensions.kc \
   >"$BACKUP_DIR/auxkc-after-sha256.txt"
 find /System/Volumes/Preboot -type f -name '*.kc' -exec shasum -a 256 {} \; \
   >"$BACKUP_DIR/preboot-kc-after-sha256.txt" 2>/dev/null || true
-echo "$BACKUP_DIR" >"$STATE_ROOT/latest-rollback-path"
-chmod 0600 "$STATE_ROOT/latest-rollback-path"
+rm -f "$STATE_ROOT/pending-kext-operation"
 INSTALL_COMPLETE=1
 
 echo "Passive governor staged and AuxKC rebuilt."
