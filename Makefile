@@ -38,7 +38,7 @@ $(OBJ)/TurboMacUserClient.o: TurboMac/TurboMacUserClient.cpp TurboMac/TurboMacUs
 	$(CXX) $(KEXT_CXXFLAGS) -c "$<" -o "$@"
 
 $(KEXT_MACOS)/TurboMac: $(OBJ)/TurboMac.o $(OBJ)/TurboMacUserClient.o TurboMac/Info.plist | $(KEXT_MACOS)
-	$(CXX) -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VERSION) -Wl,-kext -nostdlib -L"$(SDK)/usr/lib" -lkmodc++ -lkmod $(OBJ)/TurboMac.o $(OBJ)/TurboMacUserClient.o -o "$@"
+	$(CXX) -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VERSION) -Wl,-kext -nostdlib $(OBJ)/TurboMac.o $(OBJ)/TurboMacUserClient.o -L"$(SDK)/usr/lib" -lkmodc++ -lkmod -o "$@"
 	install -m 0644 TurboMac/Info.plist "$(KEXT)/Contents/Info.plist"
 
 $(OBJ)/SMCReader.o: Daemon/SMCReader.c Daemon/SMCReader.h | $(OBJ)
@@ -88,6 +88,9 @@ verify: package
 	codesign --verify --strict --verbose=4 "$(KEXT)"
 	codesign --verify --strict --verbose=4 "$(RELEASE)/turbomacd" "$(RELEASE)/turbomacctl" "$(RELEASE)/turbomac-avx2-load"
 	file "$(KEXT_MACOS)/TurboMac" "$(RELEASE)/turbomacd" "$(RELEASE)/turbomacctl" "$(RELEASE)/turbomac-avx2-load" | grep -c 'x86_64' | grep -q '^4$$'
+	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _kmod_info$$'
+	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _TurboMacModuleStart$$'
+	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _TurboMacModuleStop$$'
 	@if [[ "$$(uname -m)" == "x86_64" ]]; then kmutil print-diagnostics -a x86_64 -z -p "$(KEXT)"; else echo "kmutil loadability diagnostics deferred to the x86_64 target host"; fi
 
 test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/replay_observer

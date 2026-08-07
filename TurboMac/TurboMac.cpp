@@ -6,6 +6,7 @@
 #include <i386/proc_reg.h>
 #include <kern/clock.h>
 #include <libkern/OSAtomic.h>
+#include <mach/kmod.h>
 #include <mach/mach_time.h>
 
 #include "../Shared/RAPLCodec.h"
@@ -728,3 +729,26 @@ void TurboMac::readCPUIdentity(uint32_t *family, uint32_t *model, uint32_t *step
         : baseModel;
     *stepping = eax & 0xfU;
 }
+
+extern "C" kern_return_t TurboMacModuleStart(kmod_info_t *, void *) {
+    return KERN_SUCCESS;
+}
+
+extern "C" kern_return_t TurboMacModuleStop(kmod_info_t *, void *) {
+    return KERN_SUCCESS;
+}
+
+extern "C" kmod_info_t kmod_info = {
+    0,
+    KMOD_INFO_VERSION,
+    UINT32_MAX,
+    "com.parham.turbomac.driver",
+    "2.0.0",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    TurboMacModuleStart,
+    TurboMacModuleStop,
+};

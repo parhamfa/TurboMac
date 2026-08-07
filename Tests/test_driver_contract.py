@@ -22,6 +22,9 @@ for required in (
     "mp_rendezvous_no_intrs(powerControlOnCPU",
     "setPowerControlGuardLocked(false)",
     "setPowerControlGuardLocked(true)",
+    '"com.parham.turbomac.driver"',
+    "TurboMacModuleStart",
+    "TurboMacModuleStop",
 ):
     assert required in driver, required
 
