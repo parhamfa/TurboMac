@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import plistlib
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 driver = (root / "TurboMac" / "TurboMac.cpp").read_text()
 client = (root / "TurboMac" / "TurboMacUserClient.cpp").read_text()
 validation = (root / "Deploy" / "whisper-validation.example").read_text()
+with (root / "TurboMac" / "Info.plist").open("rb") as plist_file:
+    driver_info = plistlib.load(plist_file)
 
 for forbidden in (
     "IA32_HWP_REQUEST",
@@ -35,5 +38,11 @@ assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation
 assert "--no-gpu" in validation
+assert driver_info["OSBundleLibraries"] == {
+    "com.apple.kpi.iokit": "20.0.0",
+    "com.apple.kpi.libkern": "20.0.0",
+    "com.apple.kpi.mach": "20.0.0",
+    "com.apple.kpi.unsupported": "20.0.0",
+}
 
 print("driver fail-safe source contract tests passed")
