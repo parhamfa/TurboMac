@@ -1,0 +1,60 @@
+#!/bin/bash
+set -euo pipefail
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+ROOT="/Library/Application Support/TurboMac"
+FIXTURE="$ROOT/validation"
+CONFIG="$FIXTURE/runtime.conf"
+MANIFEST="$FIXTURE/sha256.txt"
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "Whisper validation must be launched by turbomacd as root" >&2
+  exit 1
+fi
+if [[ ! -f "$CONFIG" || -L "$CONFIG" || ! -f "$MANIFEST" || -L "$MANIFEST" ]]; then
+  echo "Whisper validation fixture is incomplete" >&2
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$CONFIG"
+if [[ ! "$RUN_UID" =~ ^[0-9]+$ || ! "$RUN_GID" =~ ^[0-9]+$ ]]; then
+  echo "Whisper validation identity is invalid" >&2
+  exit 1
+fi
+
+while read -r _ path; do
+  mode="$(stat -f %Lp "$FIXTURE/$path" 2>/dev/null || echo 0)"
+  if [[ ! -f "$FIXTURE/$path" || -L "$FIXTURE/$path"
+        || "$(stat -f %u "$FIXTURE/$path")" -ne 0
+        || $(( 8#$mode & 8#022 )) -ne 0 ]]; then
+    echo "Whisper validation fixture ownership check failed: $path" >&2
+    exit 1
+  fi
+done <"$MANIFEST"
+
+cd "$FIXTURE"
+if ! /usr/bin/shasum -a 256 -c "$MANIFEST" --status; then
+  echo "Whisper validation fixture hash check failed" >&2
+  exit 1
+fi
+
+for _ in 1 2; do
+  /usr/bin/sudo -n -u "#$RUN_UID" -g "#$RUN_GID" -- \
+    /usr/bin/env -i \
+      HOME=/var/empty \
+      PATH=/usr/bin:/bin \
+      GGML_BACKEND_PATH="$FIXTURE/libexec" \
+      "$FIXTURE/bin/whisper-cli" \
+        --threads 8 \
+        --processors 1 \
+        --no-gpu \
+        --no-fallback \
+        --no-prints \
+        --no-timestamps \
+        --language fa \
+        --model "$FIXTURE/model.bin" \
+        --file "$FIXTURE/audio.wav" \
+        >/dev/null 2>&1
+done

@@ -1,33 +1,130 @@
-# TurboMac
-*Stops CPU throttling on Intel-based Macs*
+# TurboMac Dynamic RAPL Governor
 
-# Summary
-A malfunctioning or missing battery and an overzealous thermal controller can cause unnecessary throttling on many Macs, which can be quite hard to get rid of and bring them to a near-unusable state. By setting the appropriate values on the **IA32_HWP_REQUEST (0x774)** or **IA32_PERF_CTL (0x199)** MSR, TurboMac keeps your device on a high performance profile.
+This fork replaces TurboMac's one-shot HWP and XOR writes with a passive-first,
+package-scoped Intel RAPL governor. It was designed specifically for a
+2017 MacBook Pro 14,3 with an Intel Core i7-7820HQ, no battery, and a USB-C
+input-power failure mode.
 
-# Disclaimer
-**NO WARRANTY! I AM NOT TO BE HELD LIABLE FOR ANY DAMAGES.**
+This is not a general-purpose thermal utility. The KEXT refuses to arm on a CPU
+family/model other than Intel family 6, model `0x9e`. The daemon additionally
+binds a calibration profile to the machine UUID, model, CPU brand, SMC key
+types, macOS version, and build.
 
-This product was designed around a personal need - getting rid of the unbearable CPU throttling after my girlfriend's laptop battery died. As such it has only been tested on one device - a Macbook Pro 2017 running Catalina. **It only works on Intel-based Macs.**
+## What it controls
 
-We are messing with CPU registers dealing with thermals, so appropriate care is recommended. Something going *seriously* wrong is pretty unlikely by itself, but in combination with other factors (did you mess with your fan settings? BD_PROCHOT?), and Macs' overall sensitivity you could, if very unlucky, end up causing permanent damage to your CPU.
+Only package RAPL PL1/PL2 are changed. The limit applies to the whole Intel CPU
+package, so native processes and VM workloads receive the same package budget.
+The governor never writes HWP, per-process controls, arbitrary MSRs, or the RAPL
+lock bit, and it never raises either limit above Apple's captured value.
 
-# Installation
-**DISCLAIMER: Disabling SIP brings your system to a more vulnerable state. It is recommended that after installation you re-enable SIP (without the kext restriction) by running `csrutil enable --without kext` from Recovery mode. Even after you've done this, as long as the kext signing restriction remains disabled you should take special care when installing kexts.**
+Discrete GPU, display, USB devices, storage, conversion losses, and other power
+rails remain outside CPU RAPL. This can reduce CPU-caused input surges; it cannot
+guarantee that the Mac will not lose power.
 
-1. *OS X 10.11 (El Capitan) and higher:* Disable System Integrity Protection (SIP) by running `csrutil disable` from the terminal in Recovery mode.
-2. *OS X 11 (Big Sur) and higher:* Also disable Authenticated Root by running `csrutil authenticated-root disable` from Recovery mode.
-3. Open the Build folder
-4. Grant the installer appropriate for your OS version execution privileges using `chmod +x /path/to/installer` from the Terminal.
-5. Open the appropriate installer and follow further instructions. Make sure you **don't reboot until the installer script is fully complete.**
+## Control bands
 
-You can verify that the extension has loaded correctly by seeing if it shows up when you type `kextstat | grep TurboMac` in the Terminal.
+The observed `45/52/58 W` values are controller bands, not proven shutdown-safe
+limits. They scale continuously from the median live AppleSMC `ACPW` value:
 
-# Uninstallation
-Follow the same steps as in the Installation section, except open the uninstallation script instead of the installation script. You can entirely re-enable SIP and Authenticated Root when done.
+| Band | Ratio of ACPW | At ACPW 79.496 W |
+|---|---:|---:|
+| Guard | 56.61% | 45.003 W |
+| Shed | 65.41% | 51.998 W |
+| Emergency | 72.96% | 58.000 W |
 
-# License
-Made by Marko Calasan, 2022.
+The daemon samples package energy at 10 Hz and AppleSMC `PDTR`/`ACPW` at 4 Hz.
+It estimates non-CPU input as `PDTR - package power` with fast-rise/slow-fall
+filtering. PL1 is the active state's input target minus that estimate and the
+calibrated reserve. Decreases apply immediately; PL1 increases by at most 1 W
+per five seconds. PL2 is equal to PL1 outside cruise, where a separately tested
+burst allowance may apply. Emergency prediction also takes the more conservative
+of the live rail estimate and the calibrated package-to-input mapping.
 
-This product is licensed under the **GNU General Public License v3.0**.
+Transitions use the hysteresis defined in `Daemon/Policy.cpp`: guard requires
+two seconds, shed one second, and emergency is immediate from measured or
+predicted input. Recovery takes 5/10/15 seconds. If non-CPU load remains above
+the emergency band while RAPL is already at its calibrated floor, the daemon
+logs `non_cpu_over_budget` and keeps the CPU at that floor.
 
-THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY APPLICABLE LAW. EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM “AS IS” WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM IS WITH YOU. SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
+## Fail-safe boundary
+
+The KEXT starts passive and permits one root client. On arm it:
+
+1. captures Apple's package limits and verifies the guard on every logical CPU;
+2. installs and verifies conservative package limits;
+3. only then clears bidirectional PROCHOT enable bit 0 on every logical CPU.
+
+It restores Apple's guard before the captured RAPL limits on daemon disconnect,
+malformed commands, unsafe readback, explicit disarm, driver stop, or a five-
+second heartbeat timeout. Auto-arm requires ten continuous seconds of valid
+telemetry, a protected root-owned profile, exact identity matching, and a prior
+successful fixed Whisper validation.
+
+## Build and test
+
+Xcode 26's toolchain and SDK are used directly because this repository's legacy
+Xcode project can be unusable when the installed Xcode is newer than the local
+macOS private frameworks.
+
+```sh
+./script/build_and_run.sh
+```
+
+This runs unit tests, builds all deployment artifacts as `x86_64`, ad-hoc signs
+them, verifies signatures and plists, and creates `build/package`. On an x86_64
+target it also runs `kmutil print-diagnostics -z` for this explicitly
+SIP-disabled, ad-hoc-signed installation. Tests cover RAPL encoding,
+32-bit energy wraparound, malformed requests, watchdog timing, controller
+scaling, transitions, hysteresis, slew limiting, and the 45/52/58 paths.
+
+Historical observer logs can be replayed without actuation:
+
+```sh
+make replay FILES="/path/to/samples-*.jsonl"
+```
+
+Historical `smc_pcpc_w` is only a package-power proxy; calibration uses real
+RAPL energy telemetry.
+
+## Supervised rollout
+
+`Deploy/install-passive.sh` backs up the existing KEXT and live kernel state,
+installs only under `/Library`, `/usr/local`, and the TurboMac application-
+support directory, validates the bundle, and rebuilds the AuxKC. It never edits
+`/System/Library` and never reboots automatically. If a rebuild fails, it puts
+the original files back and attempts to rebuild their collections before
+refusing to proceed. `Deploy/rollback.sh` moves
+new files into a recoverable directory, restores the captured KEXT, and rebuilds
+the AuxKC.
+
+After the passive reboot and SSH verification:
+
+```sh
+sudo turbomacctl status
+sudo turbomacctl calibrate
+sudo turbomacctl validate
+sudo turbomacctl arm
+sudo turbomacctl disarm
+sudo turbomacctl logs
+```
+
+Calibration requires an interactive confirmation and physical supervision. It
+uses an eight-thread deterministic AVX2 load, three 30-second runs per 2 W PL1
+step, and repeated five-second PL2 bursts. It aborts on `PDTR >= 52 W`, CPU
+temperature `>= 95 C`, ACPW change over 5%, a read failure, or a limit mismatch;
+it conservatively stops a sweep at 50 W. Calibration leaves auto-arm disabled.
+Only a successful protected, fixed Whisper workload enables it.
+
+`Deploy/configure-whisper-validation.sh` copies a model, audio fixture, Whisper
+binary, and all non-system libraries into a root-owned, hash-pinned bundle. The
+runtime helper still drops to the nominated unprivileged account before running
+two eight-thread CPU-only transcriptions.
+
+Keep an independent observer running during rollout. Do not treat a completed
+calibration or a surviving excursion as proof of a universal shutdown boundary.
+
+## License and provenance
+
+Forked from [mndhvn/TurboMac](https://github.com/mndhvn/TurboMac). Original work
+copyright Marko Calasan, 2022. Modifications are distributed under the GNU GPL
+v3.0; see `LICENSE`. There is no warranty.

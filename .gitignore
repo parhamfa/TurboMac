@@ -1,3 +1,8 @@
 
 **.swp
 .DS_Store
+build/
+Build/manual-baseline/
+Build/manual-kext/
+Build/manual-userspace/
+Build/tests/
