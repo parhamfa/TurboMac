@@ -95,9 +95,10 @@ support directory, validates the bundle, and rebuilds the AuxKC. It never edits
 the original files back and attempts to rebuild their collections before
 refusing to proceed. `Deploy/rollback.sh` moves
 new files into a recoverable directory, restores the captured KEXT, and rebuilds
-the AuxKC. On macOS 13, the scripts select an installed KDK only when its kernel
-contains the exact running XNU version string, then pass that KDK explicitly to
-`kmutil`.
+the AuxKC. The scripts use the documented `kmutil load` staging flow so
+`kernelmanagerd` rebuilds only the auxiliary collection; they do not invoke the
+system-only `kmutil install --update-all` path or attempt to write the sealed
+boot/system collections.
 
 After the passive reboot and SSH verification:
 
