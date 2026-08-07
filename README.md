@@ -95,7 +95,9 @@ support directory, validates the bundle, and rebuilds the AuxKC. It never edits
 the original files back and attempts to rebuild their collections before
 refusing to proceed. `Deploy/rollback.sh` moves
 new files into a recoverable directory, restores the captured KEXT, and rebuilds
-the AuxKC.
+the AuxKC. On macOS 13, the scripts select an installed KDK only when its kernel
+contains the exact running XNU version string, then pass that KDK explicitly to
+`kmutil`.
 
 After the passive reboot and SSH verification:
 

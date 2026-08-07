@@ -16,13 +16,32 @@ STATE_ROOT="/Library/Application Support/TurboMac"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="$STATE_ROOT/rollback/$STAMP"
 INSTALL_COMPLETE=0
+KDK_ARGUMENTS=()
+
+select_matching_kdk() {
+  local current_kernel
+  local candidate
+  current_kernel="$(sysctl -n kern.version)"
+  for candidate in /Library/Developer/KDKs/*.kdk; do
+    if [[ -f "$candidate/System/Library/Kernels/kernel" ]] \
+        && strings "$candidate/System/Library/Kernels/kernel" \
+          | grep -F "$current_kernel" >/dev/null; then
+      KDK_ARGUMENTS=(--kdk "$candidate")
+      echo "Using exact-XNU KDK: $candidate"
+      return 0
+    fi
+  done
+  echo "No exact-XNU KDK was found; the normal kmutil lookup will be attempted." >&2
+}
 
 rebuild_collections() {
-  if kmutil install -z --volume-root / --update-all --update-preboot; then
+  if kmutil install -z --volume-root / --update-all --update-preboot \
+      "${KDK_ARGUMENTS[@]}"; then
     return 0
   fi
   echo "Normal collection rebuild failed; retrying with the explicit macOS 13 missing-KDK override." >&2
-  kmutil install -z --volume-root / --update-all --allow-missing-kdk --update-preboot
+  kmutil install -z --volume-root / --update-all --allow-missing-kdk --update-preboot \
+    "${KDK_ARGUMENTS[@]}"
 }
 
 restore_failed_install() {
@@ -107,6 +126,8 @@ find "$PACKAGE_DIR" -type f -exec shasum -a 256 {} \; \
   >"$BACKUP_DIR/package-sha256.txt"
 
 trap restore_failed_install EXIT HUP INT TERM
+
+select_matching_kdk
 
 if [[ -d "$KEXT_TARGET" ]]; then
   ditto "$KEXT_TARGET" "$BACKUP_DIR/TurboMac.kext"
