@@ -1,3 +1,4 @@
+#include "Calibration.h"
 #include "DriverClient.h"
 #include "Energy.h"
 #include "Policy.h"
@@ -1266,12 +1267,20 @@ private:
 
             const double averagePackage = step.averagePackage();
             const double averageInput = step.averageInput();
+            if (!turboMacCalibrationTierResponsive(limit, averagePackage)) {
+                std::ostringstream plateau;
+                plateau << std::fixed << std::setprecision(2)
+                        << "RAPL response plateau at " << limit
+                        << " W: avg package=" << averagePackage
+                        << "; discarding this tier and stopping the sweep\n";
+                writeAll(client, plateau.str());
+                log_.write("calibration_plateau", plateau.str());
+                break;
+            }
             mapping.emplace_back(averagePackage, averageInput);
             worstError = std::max(worstError, step.worstTransientError);
             lastSafeLimit = limit;
-            if (responsiveFloor == 0.0
-                && averagePackage >= std::max(1.0, limit * 0.65)
-                && averagePackage <= limit + 2.0) {
+            if (responsiveFloor == 0.0) {
                 responsiveFloor = limit;
             }
             std::ostringstream result;

@@ -56,7 +56,7 @@ $(OBJ)/Profile.o: Daemon/Profile.cpp Daemon/Profile.h | $(OBJ)
 $(OBJ)/TemperatureReader.o: Daemon/TemperatureReader.cpp Daemon/TemperatureReader.h | $(OBJ)
 	$(CXX) $(USER_CXXFLAGS) -c "$<" -o "$@"
 
-$(OBJ)/DaemonMain.o: Daemon/main.cpp Daemon/DriverClient.h Daemon/Energy.h Daemon/Policy.h Daemon/Profile.h Daemon/SMCReader.h Daemon/TemperatureReader.h | $(OBJ)
+$(OBJ)/DaemonMain.o: Daemon/main.cpp Daemon/Calibration.h Daemon/DriverClient.h Daemon/Energy.h Daemon/Policy.h Daemon/Profile.h Daemon/SMCReader.h Daemon/TemperatureReader.h | $(OBJ)
 	$(CXX) $(USER_CXXFLAGS) -c "$<" -o "$@"
 
 $(RELEASE)/turbomacd: $(OBJ)/DaemonMain.o $(OBJ)/DriverClient.o $(OBJ)/Policy.o $(OBJ)/Profile.o $(OBJ)/TemperatureReader.o $(OBJ)/SMCReader.o | $(RELEASE)
@@ -94,10 +94,11 @@ verify: package
 	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _TurboMacModuleStop$$'
 	@if [[ "$$(uname -m)" == "x86_64" ]]; then kmutil print-diagnostics -a x86_64 -z -p "$(KEXT)"; else echo "kmutil loadability diagnostics deferred to the x86_64 target host"; fi
 
-test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/replay_observer
+test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/test_calibration $(BUILD)/tests/replay_observer
 	"$(BUILD)/tests/test_rapl"
 	"$(BUILD)/tests/test_policy"
 	"$(BUILD)/tests/test_temperature"
+	"$(BUILD)/tests/test_calibration"
 	python3 Tests/test_driver_contract.py
 
 $(BUILD)/tests:
@@ -111,6 +112,9 @@ $(BUILD)/tests/test_policy: Tests/test_policy.cpp Daemon/Policy.cpp Daemon/Polic
 
 $(BUILD)/tests/test_temperature: Tests/test_temperature.cpp Daemon/TemperatureReader.cpp Daemon/TemperatureReader.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IDaemon Tests/test_temperature.cpp Daemon/TemperatureReader.cpp -o "$@"
+
+$(BUILD)/tests/test_calibration: Tests/test_calibration.cpp Daemon/Calibration.h | $(BUILD)/tests
+	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IDaemon "$<" -o "$@"
 
 $(BUILD)/tests/replay_observer: Tests/replay_observer.cpp Daemon/Policy.cpp Daemon/Policy.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IShared -IDaemon Tests/replay_observer.cpp Daemon/Policy.cpp -o "$@"

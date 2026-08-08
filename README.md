@@ -119,10 +119,11 @@ sudo turbomacctl logs
 
 Calibration requires an interactive confirmation and physical supervision. It
 uses an eight-thread deterministic AVX2 load, three 30-second runs per 2 W PL1
-step, and repeated five-second PL2 bursts. It aborts on `PDTR >= 52 W`, CPU
-temperature `>= 95 C`, ACPW change over 5%, a read failure, or a limit mismatch;
-it conservatively stops a sweep at 50 W. Calibration leaves auto-arm disabled.
-Only a successful protected, fixed Whisper workload enables it.
+step, and repeated five-second PL2 bursts. Progress is streamed as each run is
+measured. It aborts on `PDTR >= 52 W`, CPU temperature `>= 95 C`, ACPW change
+over 5%, a read failure, or a limit mismatch; it discards a non-responsive RAPL
+tier and conservatively stops a sweep at 50 W. Calibration leaves auto-arm
+disabled. Only a successful protected, fixed Whisper workload enables it.
 
 `Deploy/configure-whisper-validation.sh` copies a model, audio fixture, Whisper
 binary, and all non-system libraries into a root-owned, hash-pinned bundle. The

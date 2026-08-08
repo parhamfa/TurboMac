@@ -6,6 +6,7 @@ root = Path(__file__).resolve().parents[1]
 driver = (root / "TurboMac" / "TurboMac.cpp").read_text()
 client = (root / "TurboMac" / "TurboMacUserClient.cpp").read_text()
 daemon = (root / "Daemon" / "main.cpp").read_text()
+cli = (root / "CLI" / "main.cpp").read_text()
 validation = (root / "Deploy" / "whisper-validation.example").read_text()
 installer = (root / "Deploy" / "install-passive.sh").read_text()
 finalizer = (root / "Deploy" / "finalize-passive.sh").read_text()
@@ -77,8 +78,12 @@ assert "apple_guard_enabled" in daemon
 assert "rapl_locked" in daemon
 assert "current_power_control_raw" in daemon
 assert "calibration precondition failed" in daemon
+assert "turboMacCalibrationTierResponsive(limit, averagePackage)" in daemon
+assert "calibration_plateau" in daemon
 assert "TurboMacCapabilities statusCapabilities" in daemon
 assert "driver_.capabilities(\n            &statusCapabilities" in daemon
+assert "std::fflush(stdout)" in cli
+assert "return sawError ? 1 : 0" in cli
 assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation

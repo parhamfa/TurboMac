@@ -55,7 +55,8 @@ int request(const std::string &command) {
     }
     shutdown(socketFD, SHUT_WR);
 
-    std::string response;
+    std::string pendingLine;
+    bool sawError = false;
     char buffer[4096];
     for (;;) {
         const ssize_t count = read(socketFD, buffer, sizeof(buffer));
@@ -70,11 +71,30 @@ int request(const std::string &command) {
         if (count == 0) {
             break;
         }
-        response.append(buffer, (size_t)count);
+        if (std::fwrite(buffer, 1U, (size_t)count, stdout) != (size_t)count) {
+            std::perror("stdout");
+            close(socketFD);
+            return 1;
+        }
+        std::fflush(stdout);
+
+        pendingLine.append(buffer, (size_t)count);
+        for (;;) {
+            const size_t newline = pendingLine.find('\n');
+            if (newline == std::string::npos) {
+                break;
+            }
+            if (pendingLine.rfind("ERROR", 0U) == 0U) {
+                sawError = true;
+            }
+            pendingLine.erase(0U, newline + 1U);
+        }
     }
     close(socketFD);
-    std::fwrite(response.data(), 1U, response.size(), stdout);
-    return response.rfind("ERROR", 0U) == 0U ? 1 : 0;
+    if (pendingLine.rfind("ERROR", 0U) == 0U) {
+        sawError = true;
+    }
+    return sawError ? 1 : 0;
 }
 
 } // namespace
