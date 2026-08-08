@@ -900,10 +900,21 @@ private:
         output << ",\"non_cpu_over_budget\":"
                << (snapshot.nonCPUOverBudget ? "true" : "false")
                << ",\"smc_invalid_consecutive\":" << smcFailures_
+               << ",\"apple_guard_enabled\":"
+               << ((capabilities_.flags & kTurboMacCapabilityBidirProchotEnabled) != 0U
+                    ? "true" : "false")
+               << ",\"rapl_locked\":"
+               << ((capabilities_.flags & kTurboMacCapabilityLimitLocked) != 0U
+                    ? "true" : "false")
+               << ",\"driver_capability_flags\":" << capabilities_.flags
                << ",\"driver_state\":"
                << (driverStatusValid ? driverStatus.driver_state : UINT32_MAX)
                << ",\"driver_restore_reason\":"
                << (driverStatusValid ? driverStatus.restore_reason : UINT32_MAX)
+               << ",\"current_package_limit_raw\":"
+               << (driverStatusValid ? driverStatus.current_package_limit_raw : 0U)
+               << ",\"current_power_control_raw\":"
+               << (driverStatusValid ? driverStatus.current_power_control_raw : 0U)
                << "}";
         return output.str();
     }
@@ -1155,10 +1166,21 @@ private:
         }
 
         TurboMacCapabilities current = {};
-        if (!driver_.capabilities(&current, &error)
-            || (current.flags & kTurboMacCapabilityBidirProchotEnabled) == 0U
-            || (current.flags & kTurboMacCapabilityLimitLocked) != 0U) {
-            writeAll(client, "ERROR Apple guard must be enabled and RAPL unlocked\n");
+        if (!driver_.capabilities(&current, &error)) {
+            writeAll(client, "ERROR could not read current driver capabilities: " + error + "\n");
+            return;
+        }
+        const bool appleGuardEnabled =
+            (current.flags & kTurboMacCapabilityBidirProchotEnabled) != 0U;
+        const bool raplLocked =
+            (current.flags & kTurboMacCapabilityLimitLocked) != 0U;
+        if (!appleGuardEnabled || raplLocked) {
+            writeAll(
+                client,
+                std::string("ERROR calibration precondition failed: apple_guard_enabled=")
+                    + (appleGuardEnabled ? "true" : "false")
+                    + " rapl_locked=" + (raplLocked ? "true" : "false") + "\n"
+            );
             return;
         }
         const double driverFloor = std::max(

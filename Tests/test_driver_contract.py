@@ -56,6 +56,10 @@ assert "kRAPLFallbackInterval = 1.0" in daemon
 assert "energyTracker_.sample(" in daemon
 assert "energyTracker_.reset()" in daemon
 assert "raplSuccesses_ >= kTelemetryRecoverySamples" in daemon
+assert "apple_guard_enabled" in daemon
+assert "rapl_locked" in daemon
+assert "current_power_control_raw" in daemon
+assert "calibration precondition failed" in daemon
 assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation
