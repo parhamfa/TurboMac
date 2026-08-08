@@ -170,10 +170,13 @@ which leaves HWP enabled under its conservative fail-safe until reboot. It also
 leaves auto-arm disabled. Only a successful protected, fixed Whisper workload
 enables auto-arm.
 
-`Deploy/configure-whisper-validation.sh` copies a model, audio fixture, Whisper
-binary, and all non-system libraries into a root-owned, hash-pinned bundle. The
-runtime helper still drops to the nominated unprivileged account before running
-two eight-thread CPU-only transcriptions.
+`Deploy/build-whisper-validation-runtime.sh` reproducibly builds the pinned GGML
+0.17.0 and whisper.cpp 1.9.1 sources with GGML's default backend directory set
+to the protected validation bundle. `Deploy/configure-whisper-validation.sh`
+then copies the model, audio fixture, binary, and all non-system libraries into
+that root-owned, hash-pinned bundle. Configuration refuses a runtime that loads
+a mutable Homebrew backend. The runtime helper drops to the nominated
+unprivileged account before running two eight-thread CPU-only transcriptions.
 
 Keep an independent observer running during rollout. Do not treat a completed
 calibration or a surviving excursion as proof of a universal shutdown boundary.

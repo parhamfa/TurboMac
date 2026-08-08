@@ -45,7 +45,6 @@ for _ in 1 2; do
     /usr/bin/env -i \
       HOME=/var/empty \
       PATH=/usr/bin:/bin \
-      GGML_BACKEND_PATH="$FIXTURE/libexec" \
       "$FIXTURE/bin/whisper-cli" \
         --threads 8 \
         --processors 1 \

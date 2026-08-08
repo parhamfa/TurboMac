@@ -64,30 +64,52 @@ install -m 0644 -o root -g wheel "$LIBOMP_DYLIB" "$FIXTURE/lib/libomp.dylib"
 install -m 0444 -o root -g wheel "$MODEL" "$FIXTURE/model.bin"
 install -m 0444 -o root -g wheel "$AUDIO" "$FIXTURE/audio.wav"
 
-/usr/bin/install_name_tool \
-  -change /usr/local/opt/ggml/lib/libggml.0.dylib @loader_path/../lib/libggml.0.dylib \
-  -change /usr/local/opt/ggml/lib/libggml-base.0.dylib @loader_path/../lib/libggml-base.0.dylib \
-  "$FIXTURE/bin/whisper-cli"
-/usr/bin/install_name_tool \
-  -id @rpath/libwhisper.1.dylib \
-  -change /usr/local/opt/ggml/lib/libggml.0.dylib @loader_path/libggml.0.dylib \
-  -change /usr/local/opt/ggml/lib/libggml-base.0.dylib @loader_path/libggml-base.0.dylib \
+rewrite_dependency() {
+  local binary="$1"
+  local dependency_name="$2"
+  local replacement="$3"
+  local dependency
+  local rewritten=0
+
+  while IFS= read -r dependency; do
+    if [[ "${dependency##*/}" == "$dependency_name" ]]; then
+      /usr/bin/install_name_tool -change "$dependency" "$replacement" "$binary"
+      rewritten=$((rewritten + 1))
+    fi
+  done < <(/usr/bin/otool -L "$binary" | /usr/bin/tail -n +2 | /usr/bin/awk '{print $1}')
+
+  if [[ "$rewritten" -ne 1 ]]; then
+    echo "expected exactly one $dependency_name dependency in $binary" >&2
+    exit 1
+  fi
+}
+
+rewrite_dependency "$FIXTURE/bin/whisper-cli" \
+  libwhisper.1.dylib @loader_path/../lib/libwhisper.1.dylib
+rewrite_dependency "$FIXTURE/bin/whisper-cli" \
+  libggml.0.dylib @loader_path/../lib/libggml.0.dylib
+rewrite_dependency "$FIXTURE/bin/whisper-cli" \
+  libggml-base.0.dylib @loader_path/../lib/libggml-base.0.dylib
+/usr/bin/install_name_tool -id @rpath/libwhisper.1.dylib \
   "$FIXTURE/lib/libwhisper.1.dylib"
-/usr/bin/install_name_tool \
-  -id @rpath/libggml.0.dylib \
-  -change @rpath/libggml-base.0.dylib @loader_path/libggml-base.0.dylib \
+rewrite_dependency "$FIXTURE/lib/libwhisper.1.dylib" \
+  libggml.0.dylib @loader_path/libggml.0.dylib
+rewrite_dependency "$FIXTURE/lib/libwhisper.1.dylib" \
+  libggml-base.0.dylib @loader_path/libggml-base.0.dylib
+/usr/bin/install_name_tool -id @rpath/libggml.0.dylib \
   "$FIXTURE/lib/libggml.0.dylib"
-/usr/bin/install_name_tool \
-  -id @rpath/libggml-base.0.dylib \
-  -change /usr/local/opt/libomp/lib/libomp.dylib @loader_path/libomp.dylib \
+rewrite_dependency "$FIXTURE/lib/libggml.0.dylib" \
+  libggml-base.0.dylib @loader_path/libggml-base.0.dylib
+/usr/bin/install_name_tool -id @rpath/libggml-base.0.dylib \
   "$FIXTURE/lib/libggml-base.0.dylib"
-/usr/bin/install_name_tool \
-  -change @rpath/libggml-base.0.dylib @loader_path/../lib/libggml-base.0.dylib \
-  -change /usr/local/opt/libomp/lib/libomp.dylib @loader_path/../lib/libomp.dylib \
-  "$FIXTURE/libexec/libggml-cpu.so"
-/usr/bin/install_name_tool \
-  -change @rpath/libggml-base.0.dylib @loader_path/../lib/libggml-base.0.dylib \
-  "$FIXTURE/libexec/libggml-blas.so"
+rewrite_dependency "$FIXTURE/lib/libggml-base.0.dylib" \
+  libomp.dylib @loader_path/libomp.dylib
+rewrite_dependency "$FIXTURE/libexec/libggml-cpu.so" \
+  libggml-base.0.dylib @loader_path/../lib/libggml-base.0.dylib
+rewrite_dependency "$FIXTURE/libexec/libggml-cpu.so" \
+  libomp.dylib @loader_path/../lib/libomp.dylib
+rewrite_dependency "$FIXTURE/libexec/libggml-blas.so" \
+  libggml-base.0.dylib @loader_path/../lib/libggml-base.0.dylib
 /usr/bin/install_name_tool -id @rpath/libomp.dylib "$FIXTURE/lib/libomp.dylib"
 
 for binary in \
@@ -128,6 +150,31 @@ chmod 0555 "$FIXTURE/bin/whisper-cli" \
   "$FIXTURE/libexec/libggml-cpu.so" "$FIXTURE/libexec/libggml-blas.so"
 chmod 0444 "$FIXTURE/lib/"* "$FIXTURE/model.bin" "$FIXTURE/audio.wav" \
   "$FIXTURE/runtime.conf" "$FIXTURE/sha256.txt"
+
+if ! /usr/bin/strings "$FIXTURE/lib/libggml.0.dylib" \
+    | /usr/bin/grep -Fx "$FIXTURE/libexec" >/dev/null; then
+  echo "GGML was not built for the protected validation backend directory" >&2
+  exit 1
+fi
+BACKEND_PROBE="$({
+  cd "$FIXTURE"
+  /usr/bin/sudo -n -u "#$RUN_UID" -g "#$RUN_GID" -- \
+    /usr/bin/env -i HOME=/var/empty PATH=/usr/bin:/bin \
+      "$FIXTURE/bin/whisper-cli" --help
+} 2>&1)" || {
+  echo "fixed Whisper runtime probe failed" >&2
+  exit 1
+}
+if /usr/bin/grep -E '/usr/local/|/opt/homebrew/' <<<"$BACKEND_PROBE" >/dev/null; then
+  echo "fixed Whisper runtime escaped to a mutable package-manager backend" >&2
+  exit 1
+fi
+for backend in libggml-cpu.so libggml-blas.so; do
+  if ! /usr/bin/grep -F "$FIXTURE/libexec/$backend" <<<"$BACKEND_PROBE" >/dev/null; then
+    echo "fixed Whisper runtime did not load $backend from its protected bundle" >&2
+    exit 1
+  fi
+done
 install -m 0555 -o root -g wheel "$TEMPLATE" "$ROOT/whisper-validation"
 
 if otool -L "$FIXTURE/bin/whisper-cli" "$FIXTURE/lib/"* "$FIXTURE/libexec/"* \

@@ -8,6 +8,12 @@ client = (root / "TurboMac" / "TurboMacUserClient.cpp").read_text()
 daemon = (root / "Daemon" / "main.cpp").read_text()
 cli = (root / "CLI" / "main.cpp").read_text()
 validation = (root / "Deploy" / "whisper-validation.example").read_text()
+validation_configure = (
+    root / "Deploy" / "configure-whisper-validation.sh"
+).read_text()
+validation_builder = (
+    root / "Deploy" / "build-whisper-validation-runtime.sh"
+).read_text()
 installer = (root / "Deploy" / "install-passive.sh").read_text()
 finalizer = (root / "Deploy" / "finalize-passive.sh").read_text()
 with (root / "TurboMac" / "Info.plist").open("rb") as plist_file:
@@ -155,6 +161,13 @@ assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation
 assert "--no-gpu" in validation
+assert "GGML_BACKEND_PATH" not in validation
+assert "fixed Whisper runtime escaped" in validation_configure
+assert 'grep -Fx "$FIXTURE/libexec"' in validation_configure
+assert "GGML_BACKEND_DIR" in validation_builder
+assert 'DESTDIR="$GGML_STAGE"' in validation_builder
+assert "49ed958226dd75ea13b3b493150181e3a3ca7dc28c20a3d1f00d23e94cbf7a47" in validation_builder
+assert "147267177eef7b22ec3d2476dd514d1b12e160e176230b740e3d1bd600118447" in validation_builder
 assert 'KEXT_POLICY_EXIT=27' in installer
 assert 'pending-kext-operation' in installer
 assert 'INSTALL_COMPLETE=1' in installer
