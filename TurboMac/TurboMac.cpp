@@ -515,6 +515,12 @@ bool TurboMac::initializeCapabilitiesLocked() {
         supported_ = readPowerControlLocked(
             &allEnabled, &allDisabled, &currentPowerControl_
         );
+        if (supported_ && !allEnabled) {
+            supported_ = setPowerControlGuardLocked(true);
+            if (supported_) {
+                IOLog("TurboMac: restored Apple's bidirectional PROCHOT guard for passive mode\n");
+            }
+        }
     }
     return supported_;
 }

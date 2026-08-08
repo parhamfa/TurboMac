@@ -48,7 +48,8 @@ logs `non_cpu_over_budget` and keeps the CPU at that floor.
 
 ## Fail-safe boundary
 
-The KEXT starts passive and permits one root client. On arm it:
+The KEXT starts passive, restores Apple's bidirectional PROCHOT guard if an old
+bypass left it disabled, and permits one root client. On arm it:
 
 1. captures Apple's package limits and verifies the guard on every logical CPU;
 2. installs and verifies conservative package limits;

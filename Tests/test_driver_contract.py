@@ -34,6 +34,12 @@ for required in (
 ):
     assert required in driver, required
 
+capability_initialization = driver.split(
+    "bool TurboMac::initializeCapabilitiesLocked()", 1
+)[1].split("bool TurboMac::reserveClientLocked()", 1)[0]
+assert "if (supported_ && !allEnabled)" in capability_initialization
+assert "setPowerControlGuardLocked(true)" in capability_initialization
+
 assert "driver_->invalidClientCommand()" in client
 assert "driver_->clientDisconnected()" in client
 assert "super::externalMethod(" in client
@@ -60,6 +66,8 @@ assert "apple_guard_enabled" in daemon
 assert "rapl_locked" in daemon
 assert "current_power_control_raw" in daemon
 assert "calibration precondition failed" in daemon
+assert "TurboMacCapabilities statusCapabilities" in daemon
+assert "driver_.capabilities(\n            &statusCapabilities" in daemon
 assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation

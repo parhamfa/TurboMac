@@ -863,8 +863,13 @@ private:
 
     std::string statusJSON() {
         TurboMacDriverStatus driverStatus = {};
+        TurboMacCapabilities statusCapabilities = {};
         std::string ignored;
         const bool driverStatusValid = driver_.status(&driverStatus, &ignored);
+        const bool statusCapabilitiesValid = driver_.capabilities(
+            &statusCapabilities,
+            &ignored
+        );
         const PolicySnapshot snapshot = policy_.evaluate(monotonicSeconds());
         std::ostringstream output;
         output << std::fixed << std::setprecision(3)
@@ -901,12 +906,15 @@ private:
                << (snapshot.nonCPUOverBudget ? "true" : "false")
                << ",\"smc_invalid_consecutive\":" << smcFailures_
                << ",\"apple_guard_enabled\":"
-               << ((capabilities_.flags & kTurboMacCapabilityBidirProchotEnabled) != 0U
+               << (statusCapabilitiesValid
+                    && (statusCapabilities.flags & kTurboMacCapabilityBidirProchotEnabled) != 0U
                     ? "true" : "false")
                << ",\"rapl_locked\":"
-               << ((capabilities_.flags & kTurboMacCapabilityLimitLocked) != 0U
+               << (statusCapabilitiesValid
+                    && (statusCapabilities.flags & kTurboMacCapabilityLimitLocked) != 0U
                     ? "true" : "false")
-               << ",\"driver_capability_flags\":" << capabilities_.flags
+               << ",\"driver_capability_flags\":"
+               << (statusCapabilitiesValid ? statusCapabilities.flags : 0U)
                << ",\"driver_state\":"
                << (driverStatusValid ? driverStatus.driver_state : UINT32_MAX)
                << ",\"driver_restore_reason\":"
