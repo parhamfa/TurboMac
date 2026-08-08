@@ -141,6 +141,8 @@ assert "hwp_maximum_restricted" in daemon
 assert "hwp_native_restore_requires_reboot" in daemon
 assert "Native restoration then requires a reboot" in cli
 assert "turboMacCalibrationTierResponsive(limit, averagePackage)" in daemon
+assert "turboMacCalibrationBelowEffectiveFloor(" in daemon
+assert "calibration_floor_probe" in daemon
 assert "calibration_plateau" in daemon
 assert "TurboMacCapabilities statusCapabilities" in daemon
 assert "driver_.capabilities(\n            &statusCapabilities" in daemon

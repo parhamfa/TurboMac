@@ -160,7 +160,9 @@ an eight-thread deterministic AVX2 load, three 30-second runs per 2 W PL1 step,
 and repeated five-second PL2 bursts. Progress is streamed as each run is
 measured. It aborts on `PDTR >= 52 W`, CPU temperature `>= 95 C`, ACPW change
 over 5%, a read failure, or a limit mismatch; it discards a non-responsive RAPL
-tier and conservatively stops a sweep at 50 W. Calibration finishes disarmed,
+tier after responsiveness has been established and conservatively stops a sweep
+at 50 W. Initial requests below the CPU package's observed loaded floor are
+recorded and skipped until the first responsive tier. Calibration finishes disarmed,
 which leaves HWP enabled under its conservative fail-safe until reboot. It also
 leaves auto-arm disabled. Only a successful protected, fixed Whisper workload
 enables auto-arm.

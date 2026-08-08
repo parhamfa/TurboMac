@@ -1501,6 +1501,21 @@ private:
             const double averagePackage = step.averagePackage();
             const double averageInput = step.averageInput();
             if (!turboMacCalibrationTierResponsive(limit, averagePackage)) {
+                if (responsiveFloor == 0.0
+                    && turboMacCalibrationBelowEffectiveFloor(
+                        limit, averagePackage
+                    )) {
+                    std::ostringstream floorProbe;
+                    floorProbe << std::fixed << std::setprecision(2)
+                               << "RAPL request " << limit
+                               << " W is below the effective loaded package floor: "
+                               << "avg package=" << averagePackage
+                               << "; continuing upward\n";
+                    writeAll(client, floorProbe.str());
+                    log_.write("calibration_floor_probe", floorProbe.str());
+                    limit += 2.0;
+                    continue;
+                }
                 std::ostringstream plateau;
                 plateau << std::fixed << std::setprecision(2)
                         << "RAPL response plateau at " << limit
