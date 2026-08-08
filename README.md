@@ -67,8 +67,9 @@ disabled, the first arm follows this order:
 
 1. capture Apple's package limits and verify the guard on every logical CPU;
 2. install and read back a RAPL bootstrap limit at or below 5 W;
-3. enable package-scoped HWP, read its capabilities and every logical CPU's
-   default request, then install and verify a conservative request everywhere;
+3. enable HWP and verify `IA32_PM_ENABLE` on every logical CPU, read its
+   capabilities and each CPU's default request, then install and verify a
+   conservative request everywhere;
 4. install and verify the daemon's requested RAPL limits while the conservative
    HWP request and Apple guard are still active;
 5. install a balanced autonomous HWP request using Intel's default EPP of 128,
@@ -86,6 +87,11 @@ Apple's higher limit. While passive, the watchdog re-verifies both the guard and
 the conservative request every second. Status reports whether TurboMac enabled
 HWP, whether the fail-safe has exact readback, and whether native restoration
 requires a reboot.
+
+Every per-CPU HWP request access first checks that CPU's live
+`IA32_PM_ENABLE.HWP_ENABLE` bit. A missing bit or a newly appearing logical CPU
+fails the broadcast safely: Apple's guard remains enabled and the low RAPL limit
+is retained instead of touching an unavailable request MSR.
 
 Auto-arm requires ten continuous seconds of valid telemetry, a protected
 root-owned profile, exact identity matching, and a prior successful fixed

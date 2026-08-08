@@ -98,8 +98,16 @@ private:
         uint8_t present[kMaximumLogicalCPUs];
     };
 
+    struct HWPEnableBroadcast {
+        volatile SInt32 count;
+        volatile SInt32 overflow;
+        uint64_t values[kMaximumLogicalCPUs];
+        uint8_t present[kMaximumLogicalCPUs];
+    };
+
     static void watchdogFired(OSObject *owner, IOTimerEventSource *sender);
     static void powerControlOnCPU(void *argument);
+    static void hwpEnableOnCPU(void *argument);
     static void hwpRequestOnCPU(void *argument);
 
     bool initializeCapabilitiesLocked();
@@ -115,6 +123,11 @@ private:
     );
     bool ensurePassiveGuardLocked();
     bool setPowerControlGuardLocked(bool enabled);
+    bool readHWPEnableStateLocked(bool *allEnabled, uint64_t *representative);
+    bool enableHWPPackageLocked();
+    bool hwpEnabledOnCurrentCPULocked(uint64_t *raw) const;
+    bool readHWPPackageRequestLocked(uint64_t *value) const;
+    bool writeHWPPackageRequestLocked(uint64_t value) const;
     bool initializeHWPLocked();
     bool readHWPRequestsLocked(
         uint64_t values[kMaximumLogicalCPUs],

@@ -76,14 +76,52 @@ bootstrap = driver.split("bool TurboMac::bootstrapHWPLocked", 1)[1].split(
     "bool TurboMac::ensureHWPFailSafeLocked", 1
 )[0]
 assert bootstrap.index("verifyLimitsLocked(expectedPackageLimit_)") < bootstrap.index(
-    "wrmsr64(kMSRHWPEnable"
+    "enableHWPPackageLocked()"
 )
 assert bootstrap.index("allGuardEnabled") < bootstrap.index(
-    "wrmsr64(kMSRHWPEnable"
+    "enableHWPPackageLocked()"
 )
-assert "wrmsr64(kMSRHWPEnable, kHWPEnable)" in bootstrap
-assert bootstrap.index("wrmsr64(kMSRHWPEnable") < bootstrap.index(
+assert bootstrap.index("hwpEnabledByTurboMac_ = true") < bootstrap.index(
+    "enableHWPPackageLocked()"
+)
+assert bootstrap.index("enableHWPPackageLocked()") < bootstrap.index(
     "ensureHWPFailSafeLocked()"
+)
+
+hwp_package_enable = driver.split(
+    "bool TurboMac::enableHWPPackageLocked", 1
+)[1].split("bool TurboMac::hwpEnabledOnCurrentCPULocked", 1)[0]
+assert "wrmsr64(kMSRHWPEnable, kHWPEnable)" in hwp_package_enable
+assert hwp_package_enable.index("wrmsr64(kMSRHWPEnable") < hwp_package_enable.index(
+    "readHWPEnableStateLocked("
+)
+
+hwp_request_callback = driver.split(
+    "void TurboMac::hwpRequestOnCPU", 1
+)[1].split("bool TurboMac::readHWPRequestsLocked", 1)[0]
+assert "const uint64_t enable = rdmsr64(kMSRHWPEnable)" in hwp_request_callback
+assert "(enable & kHWPEnable) == 0U" in hwp_request_callback
+assert hwp_request_callback.index("rdmsr64(kMSRHWPEnable)") < hwp_request_callback.index(
+    "rdmsr64(kMSRHWPRequest)"
+)
+assert hwp_request_callback.index("(enable & kHWPEnable) == 0U") < (
+    hwp_request_callback.index("rdmsr64(kMSRHWPRequest)")
+)
+
+hwp_package_read = driver.split(
+    "bool TurboMac::readHWPPackageRequestLocked", 1
+)[1].split("bool TurboMac::writeHWPPackageRequestLocked", 1)[0]
+assert hwp_package_read.index("hwpEnabledOnCurrentCPULocked") < (
+    hwp_package_read.index("rdmsr64(kMSRHWPPackageRequest)")
+)
+assert driver.count("rdmsr64(kMSRHWPPackageRequest)") == 1
+assert driver.count("wrmsr64(kMSRHWPPackageRequest") == 1
+
+hwp_initialize = driver.split("bool TurboMac::initializeHWPLocked", 1)[1].split(
+    "void TurboMac::hwpRequestOnCPU", 1
+)[0]
+assert hwp_initialize.index("readHWPEnableStateLocked(") < hwp_initialize.index(
+    "rdmsr64(kMSRHWPCapabilities)"
 )
 
 restricted = driver.split("bool TurboMac::hwpMaximumRestrictedLocked", 1)[1].split(
@@ -183,5 +221,8 @@ assert driver_info["OSBundleLibraries"] == {
     "com.apple.kpi.mach": "20.0.0",
     "com.apple.kpi.unsupported": "20.0.0",
 }
+assert driver_info["CFBundleShortVersionString"] == "2.2.1"
+assert driver_info["CFBundleVersion"] == "2.2.1"
+assert '"2.2.1"' in driver
 
 print("driver fail-safe source contract tests passed")
