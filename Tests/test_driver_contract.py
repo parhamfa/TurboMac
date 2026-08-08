@@ -35,6 +35,21 @@ for required in (
 
 assert "driver_->invalidClientCommand()" in client
 assert "driver_->clientDisconnected()" in client
+assert "super::externalMethod(" in client
+assert (
+    "IOExternalMethodDispatch TurboMacUserClient::dispatchTable_[kTurboMacSelectorCount]"
+    in client
+)
+assert "selector >= kTurboMacSelectorCount" in client
+assert "arguments->structureInputSize == 0U" not in client
+for payload in (
+    "sizeof(TurboMacCapabilities)",
+    "sizeof(TurboMacTelemetry)",
+    "sizeof(TurboMacLimitRequest)",
+    "sizeof(TurboMacCommandRequest)",
+    "sizeof(TurboMacDriverStatus)",
+):
+    assert payload in client, payload
 assert "kTurboMacSelectorCount" in (root / "Shared" / "TurboMacProtocol.h").read_text()
 assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation

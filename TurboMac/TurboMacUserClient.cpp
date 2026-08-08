@@ -8,6 +8,51 @@
 #define super IOUserClient
 OSDefineMetaClassAndStructors(TurboMacUserClient, IOUserClient);
 
+IOExternalMethodDispatch TurboMacUserClient::dispatchTable_[kTurboMacSelectorCount] = {
+    {
+        &TurboMacUserClient::getCapabilities,
+        0U,
+        0U,
+        0U,
+        sizeof(TurboMacCapabilities),
+    },
+    {
+        &TurboMacUserClient::readTelemetry,
+        0U,
+        0U,
+        0U,
+        sizeof(TurboMacTelemetry),
+    },
+    {
+        &TurboMacUserClient::arm,
+        0U,
+        sizeof(TurboMacLimitRequest),
+        0U,
+        0U,
+    },
+    {
+        &TurboMacUserClient::update,
+        0U,
+        sizeof(TurboMacLimitRequest),
+        0U,
+        0U,
+    },
+    {
+        &TurboMacUserClient::disarm,
+        0U,
+        sizeof(TurboMacCommandRequest),
+        0U,
+        0U,
+    },
+    {
+        &TurboMacUserClient::getStatus,
+        0U,
+        0U,
+        0U,
+        sizeof(TurboMacDriverStatus),
+    },
+};
+
 bool TurboMacUserClient::start(IOService *provider) {
     driver_ = OSDynamicCast(TurboMac, provider);
     closed_ = false;
@@ -56,73 +101,129 @@ IOReturn TurboMacUserClient::externalMethod(
     if (closed_ || driver_ == nullptr || arguments == nullptr) {
         return kIOReturnNotOpen;
     }
-    if (arguments->scalarInputCount != 0U || arguments->scalarOutputCount != 0U) {
+    if (selector >= kTurboMacSelectorCount) {
         return rejectInvalid();
     }
 
-    switch (selector) {
-        case kTurboMacSelectorGetCapabilities: {
-            if (!validateOutput(arguments, sizeof(TurboMacCapabilities))) {
-                return rejectInvalid();
-            }
-            TurboMacCapabilities output = {};
-            const IOReturn result = driver_->copyCapabilities(&output);
-            if (result == kIOReturnSuccess) {
-                bcopy(&output, arguments->structureOutput, sizeof(output));
-                arguments->structureOutputSize = sizeof(output);
-            }
-            return result;
-        }
-        case kTurboMacSelectorReadTelemetry: {
-            if (!validateOutput(arguments, sizeof(TurboMacTelemetry))) {
-                return rejectInvalid();
-            }
-            TurboMacTelemetry output = {};
-            const IOReturn result = driver_->copyTelemetry(&output);
-            if (result == kIOReturnSuccess) {
-                bcopy(&output, arguments->structureOutput, sizeof(output));
-                arguments->structureOutputSize = sizeof(output);
-            }
-            return result;
-        }
-        case kTurboMacSelectorArm:
-        case kTurboMacSelectorUpdate: {
-            if (!validateInput(arguments, sizeof(TurboMacLimitRequest))
-                || arguments->structureOutput != nullptr
-                || arguments->structureOutputSize != 0U) {
-                return rejectInvalid();
-            }
-            TurboMacLimitRequest request = {};
-            bcopy(arguments->structureInput, &request, sizeof(request));
-            return selector == kTurboMacSelectorArm
-                ? driver_->arm(&request)
-                : driver_->update(&request);
-        }
-        case kTurboMacSelectorDisarm: {
-            if (!validateInput(arguments, sizeof(TurboMacCommandRequest))
-                || arguments->structureOutput != nullptr
-                || arguments->structureOutputSize != 0U) {
-                return rejectInvalid();
-            }
-            TurboMacCommandRequest request = {};
-            bcopy(arguments->structureInput, &request, sizeof(request));
-            return driver_->disarm(&request);
-        }
-        case kTurboMacSelectorGetStatus: {
-            if (!validateOutput(arguments, sizeof(TurboMacDriverStatus))) {
-                return rejectInvalid();
-            }
-            TurboMacDriverStatus output = {};
-            const IOReturn result = driver_->copyStatus(&output);
-            if (result == kIOReturnSuccess) {
-                bcopy(&output, arguments->structureOutput, sizeof(output));
-                arguments->structureOutputSize = sizeof(output);
-            }
-            return result;
-        }
-        default:
-            return rejectInvalid();
+    const IOReturn result = super::externalMethod(
+        selector,
+        arguments,
+        &dispatchTable_[selector],
+        this,
+        nullptr
+    );
+    if (result == kIOReturnBadArgument) {
+        return rejectInvalid();
     }
+    return result;
+}
+
+IOReturn TurboMacUserClient::getCapabilities(
+    OSObject *target,
+    void *reference,
+    IOExternalMethodArguments *arguments
+) {
+    (void)reference;
+    TurboMacUserClient *client = OSDynamicCast(TurboMacUserClient, target);
+    if (client == nullptr || client->driver_ == nullptr
+        || arguments == nullptr || arguments->structureOutput == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    TurboMacCapabilities output = {};
+    const IOReturn result = client->driver_->copyCapabilities(&output);
+    if (result == kIOReturnSuccess) {
+        bcopy(&output, arguments->structureOutput, sizeof(output));
+        arguments->structureOutputSize = sizeof(output);
+    }
+    return result;
+}
+
+IOReturn TurboMacUserClient::readTelemetry(
+    OSObject *target,
+    void *reference,
+    IOExternalMethodArguments *arguments
+) {
+    (void)reference;
+    TurboMacUserClient *client = OSDynamicCast(TurboMacUserClient, target);
+    if (client == nullptr || client->driver_ == nullptr
+        || arguments == nullptr || arguments->structureOutput == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    TurboMacTelemetry output = {};
+    const IOReturn result = client->driver_->copyTelemetry(&output);
+    if (result == kIOReturnSuccess) {
+        bcopy(&output, arguments->structureOutput, sizeof(output));
+        arguments->structureOutputSize = sizeof(output);
+    }
+    return result;
+}
+
+IOReturn TurboMacUserClient::arm(
+    OSObject *target,
+    void *reference,
+    IOExternalMethodArguments *arguments
+) {
+    (void)reference;
+    TurboMacUserClient *client = OSDynamicCast(TurboMacUserClient, target);
+    if (client == nullptr || client->driver_ == nullptr
+        || arguments == nullptr || arguments->structureInput == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    TurboMacLimitRequest request = {};
+    bcopy(arguments->structureInput, &request, sizeof(request));
+    return client->driver_->arm(&request);
+}
+
+IOReturn TurboMacUserClient::update(
+    OSObject *target,
+    void *reference,
+    IOExternalMethodArguments *arguments
+) {
+    (void)reference;
+    TurboMacUserClient *client = OSDynamicCast(TurboMacUserClient, target);
+    if (client == nullptr || client->driver_ == nullptr
+        || arguments == nullptr || arguments->structureInput == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    TurboMacLimitRequest request = {};
+    bcopy(arguments->structureInput, &request, sizeof(request));
+    return client->driver_->update(&request);
+}
+
+IOReturn TurboMacUserClient::disarm(
+    OSObject *target,
+    void *reference,
+    IOExternalMethodArguments *arguments
+) {
+    (void)reference;
+    TurboMacUserClient *client = OSDynamicCast(TurboMacUserClient, target);
+    if (client == nullptr || client->driver_ == nullptr
+        || arguments == nullptr || arguments->structureInput == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    TurboMacCommandRequest request = {};
+    bcopy(arguments->structureInput, &request, sizeof(request));
+    return client->driver_->disarm(&request);
+}
+
+IOReturn TurboMacUserClient::getStatus(
+    OSObject *target,
+    void *reference,
+    IOExternalMethodArguments *arguments
+) {
+    (void)reference;
+    TurboMacUserClient *client = OSDynamicCast(TurboMacUserClient, target);
+    if (client == nullptr || client->driver_ == nullptr
+        || arguments == nullptr || arguments->structureOutput == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    TurboMacDriverStatus output = {};
+    const IOReturn result = client->driver_->copyStatus(&output);
+    if (result == kIOReturnSuccess) {
+        bcopy(&output, arguments->structureOutput, sizeof(output));
+        arguments->structureOutputSize = sizeof(output);
+    }
+    return result;
 }
 
 IOReturn TurboMacUserClient::closeOnce() {
@@ -141,16 +242,4 @@ IOReturn TurboMacUserClient::rejectInvalid() {
         driver_->invalidClientCommand();
     }
     return kIOReturnBadArgument;
-}
-
-bool TurboMacUserClient::validateOutput(IOExternalMethodArguments *arguments, size_t size) const {
-    return arguments->structureInput == nullptr
-        && arguments->structureInputSize == 0U
-        && arguments->structureOutput != nullptr
-        && arguments->structureOutputSize >= size;
-}
-
-bool TurboMacUserClient::validateInput(IOExternalMethodArguments *arguments, size_t size) const {
-    return arguments->structureInput != nullptr
-        && arguments->structureInputSize == size;
 }

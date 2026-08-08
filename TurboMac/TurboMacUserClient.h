@@ -23,10 +23,41 @@ public:
     ) override;
 
 private:
+    static IOReturn getCapabilities(
+        OSObject *target,
+        void *reference,
+        IOExternalMethodArguments *arguments
+    );
+    static IOReturn readTelemetry(
+        OSObject *target,
+        void *reference,
+        IOExternalMethodArguments *arguments
+    );
+    static IOReturn arm(
+        OSObject *target,
+        void *reference,
+        IOExternalMethodArguments *arguments
+    );
+    static IOReturn update(
+        OSObject *target,
+        void *reference,
+        IOExternalMethodArguments *arguments
+    );
+    static IOReturn disarm(
+        OSObject *target,
+        void *reference,
+        IOExternalMethodArguments *arguments
+    );
+    static IOReturn getStatus(
+        OSObject *target,
+        void *reference,
+        IOExternalMethodArguments *arguments
+    );
+
     IOReturn closeOnce();
     IOReturn rejectInvalid();
-    bool validateOutput(IOExternalMethodArguments *arguments, size_t size) const;
-    bool validateInput(IOExternalMethodArguments *arguments, size_t size) const;
+
+    static IOExternalMethodDispatch dispatchTable_[];
 
     TurboMac *driver_;
     bool closed_;
