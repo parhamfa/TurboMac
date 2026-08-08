@@ -39,8 +39,10 @@ constexpr const char *kAVX2LoadPath = "/usr/local/libexec/turbomac-avx2-load";
 constexpr const char *kWhisperValidationPath =
     "/Library/Application Support/TurboMac/whisper-validation";
 constexpr double kRAPLSampleInterval = 0.1;
+constexpr double kRAPLFallbackInterval = 1.0;
 constexpr double kSMCFastInterval = 0.25;
 constexpr double kSMCFallbackInterval = 1.0;
+constexpr uint32_t kTelemetryRecoverySamples = 20U;
 constexpr double kAutoArmTelemetrySeconds = 10.0;
 constexpr double kHardCalibrationInputW = 52.0;
 constexpr double kSoftCalibrationInputW = 50.0;
@@ -272,11 +274,10 @@ public:
           armed_(false), operationActive_(false), listenFD_(-1),
           nextRAPLTime_(0.0), nextSMCTime_(0.0), lastTelemetryLogTime_(0.0),
           lastDriverUpdateTime_(0.0), validTelemetrySince_(-1.0),
-          lastRAPLSampleTime_(-1.0), lastEnergyRaw_(0U), energyInitialized_(false),
           latestTemperatureC_(NAN), latestCPUDieTemperatureC_(NAN),
           lastCPUDieReadTime_(-1.0), latestCapacityW_(0.0), latestInputW_(0.0),
           smcFailures_(0U), smcSuccesses_(0U), smcErrorSerial_(0U),
-          raplErrorSerial_(0U), smcSampleSerial_(0U),
+          raplSuccesses_(0U), raplErrorSerial_(0U), smcSampleSerial_(0U),
           lastLoggedBand_(GovernorBand::Cruise) {
         std::memset(&smc_, 0, sizeof(smc_));
         std::memset(&capabilities_, 0, sizeof(capabilities_));
@@ -444,7 +445,7 @@ private:
         smcFailures_ = 0U;
         smcSuccesses_++;
         smcSampleSerial_++;
-        nextSMCTime_ = now + (smcSuccesses_ >= 20U
+        nextSMCTime_ = now + (smcSuccesses_ >= kTelemetryRecoverySamples
             ? kSMCFastInterval
             : (smcErrorSerial_ == 0U ? kSMCFastInterval : kSMCFallbackInterval));
         return true;
@@ -464,28 +465,40 @@ private:
             return false;
         }
 
-        if (energyInitialized_) {
-            double packageW = 0.0;
-            if (!turboMacPackagePowerWatts(
-                    lastEnergyRaw_,
-                    (uint32_t)current.package_energy_raw,
-                    capabilities_.rapl_energy_exponent,
-                    now - lastRAPLSampleTime_,
-                    &packageW
-                ) || !policy_.updatePackagePower(now, packageW)) {
-                raplErrorSerial_++;
-                if (error != nullptr) {
-                    *error = "RAPL energy delta failed validation";
-                }
-                log_.write("rapl_invalid", "energy delta failed validation");
-                return false;
-            }
-        }
-        lastEnergyRaw_ = (uint32_t)current.package_energy_raw;
-        lastRAPLSampleTime_ = now;
-        energyInitialized_ = true;
+        const uint32_t currentEnergyRaw = (uint32_t)current.package_energy_raw;
+        const uint32_t previousEnergyRaw = energyTracker_.previousRaw();
+        const double elapsed = now - energyTracker_.previousTime();
+        double packageW = 0.0;
+        const TurboMacEnergySampleResult energyResult = energyTracker_.sample(
+            currentEnergyRaw,
+            capabilities_.rapl_energy_exponent,
+            now,
+            &packageW
+        );
         telemetry_ = current;
-        nextRAPLTime_ = now + kRAPLSampleInterval;
+        if (energyResult == TurboMacEnergySampleResult::Invalid
+            || (energyResult == TurboMacEnergySampleResult::Valid
+                && !policy_.updatePackagePower(now, packageW))) {
+            raplSuccesses_ = 0U;
+            raplErrorSerial_++;
+            nextRAPLTime_ = now + kRAPLFallbackInterval;
+            if (error != nullptr) {
+                *error = "RAPL energy delta failed validation";
+            }
+            std::ostringstream detail;
+            detail << std::fixed << std::setprecision(3)
+                   << "energy delta rejected elapsed_s=" << elapsed
+                   << " delta_raw=" << (uint32_t)(currentEnergyRaw - previousEnergyRaw);
+            if (energyResult == TurboMacEnergySampleResult::Valid) {
+                detail << " package_w=" << packageW;
+            }
+            log_.write("rapl_invalid", detail.str());
+            return false;
+        }
+        raplSuccesses_++;
+        nextRAPLTime_ = now + (raplSuccesses_ >= kTelemetryRecoverySamples
+            ? kRAPLSampleInterval
+            : (raplErrorSerial_ == 0U ? kRAPLSampleInterval : kRAPLFallbackInterval));
 
         if (armed_ && current.driver_state != kTurboMacDriverArmed) {
             armed_ = false;
@@ -724,8 +737,8 @@ private:
             config.packageToInputInterceptW = profile_.packageToInputInterceptW;
         }
         policy_.reset(config);
-        energyInitialized_ = false;
-        lastRAPLSampleTime_ = -1.0;
+        energyTracker_.reset();
+        raplSuccesses_ = 0U;
         validTelemetrySince_ = -1.0;
     }
 
@@ -1497,9 +1510,7 @@ private:
     double lastTelemetryLogTime_;
     double lastDriverUpdateTime_;
     double validTelemetrySince_;
-    double lastRAPLSampleTime_;
-    uint32_t lastEnergyRaw_;
-    bool energyInitialized_;
+    TurboMacEnergyTracker energyTracker_;
     double latestTemperatureC_;
     double latestCPUDieTemperatureC_;
     double lastCPUDieReadTime_;
@@ -1508,6 +1519,7 @@ private:
     uint32_t smcFailures_;
     uint32_t smcSuccesses_;
     uint64_t smcErrorSerial_;
+    uint32_t raplSuccesses_;
     uint64_t raplErrorSerial_;
     uint64_t smcSampleSerial_;
     GovernorBand lastLoggedBand_;

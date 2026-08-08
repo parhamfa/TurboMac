@@ -31,6 +31,21 @@ int main() {
     assert(!turboMacPackagePowerWatts(1U, 2U, 32U, 0.1, &watts));
     assert(!turboMacPackagePowerWatts(1U, 2U, 14U, 2.1, &watts));
 
+    TurboMacEnergyTracker tracker;
+    assert(tracker.sample(100U, 14U, 1.0, &watts)
+        == TurboMacEnergySampleResult::Baseline);
+    assert(tracker.sample(200U, 14U, 4.0, &watts)
+        == TurboMacEnergySampleResult::Invalid);
+    assert(tracker.sample(16584U, 14U, 5.0, &watts)
+        == TurboMacEnergySampleResult::Valid);
+    assert(std::abs(watts - 1.0) < 1e-9);
+    tracker.reset();
+    assert(tracker.sample(UINT32_C(0xfffffff0), 0U, 10.0, &watts)
+        == TurboMacEnergySampleResult::Baseline);
+    assert(tracker.sample(UINT32_C(0x10), 0U, 12.0, &watts)
+        == TurboMacEnergySampleResult::Valid);
+    assert(std::abs(watts - 16.0) < 1e-9);
+
     TurboMacLimitRequest request = {};
     request.version = TURBOMAC_PROTOCOL_VERSION;
     request.size = sizeof(request);

@@ -5,6 +5,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 driver = (root / "TurboMac" / "TurboMac.cpp").read_text()
 client = (root / "TurboMac" / "TurboMacUserClient.cpp").read_text()
+daemon = (root / "Daemon" / "main.cpp").read_text()
 validation = (root / "Deploy" / "whisper-validation.example").read_text()
 installer = (root / "Deploy" / "install-passive.sh").read_text()
 finalizer = (root / "Deploy" / "finalize-passive.sh").read_text()
@@ -51,6 +52,10 @@ for payload in (
 ):
     assert payload in client, payload
 assert "kTurboMacSelectorCount" in (root / "Shared" / "TurboMacProtocol.h").read_text()
+assert "kRAPLFallbackInterval = 1.0" in daemon
+assert "energyTracker_.sample(" in daemon
+assert "energyTracker_.reset()" in daemon
+assert "raplSuccesses_ >= kTelemetryRecoverySamples" in daemon
 assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation
