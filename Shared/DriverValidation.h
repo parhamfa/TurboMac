@@ -18,7 +18,8 @@ static inline bool tm_validate_limit_request(
         && request->version == TURBOMAC_PROTOCOL_VERSION
         && request->size == sizeof(*request)
         && request->watchdog_timeout_ms == watchdog_timeout_ms
-        && request->hwp_mode == kTurboMacHWPReleaseMaximum
+        && (request->hwp_mode == kTurboMacHWPReleaseMaximum
+            || request->hwp_mode == kTurboMacHWPBootstrapAndReleaseMaximum)
         && request->sequence > last_sequence
         && request->pl1_mw >= floor_mw
         && request->pl2_mw >= request->pl1_mw

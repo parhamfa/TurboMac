@@ -59,14 +59,19 @@ bool DriverClient::hwpStatus(TurboMacHWPStatus *output, std::string *error) cons
     return callOutput(kTurboMacSelectorGetHWPStatus, output, sizeof(*output), error);
 }
 
-bool DriverClient::arm(uint32_t pl1MW, uint32_t pl2MW, std::string *error) {
+bool DriverClient::arm(
+    uint32_t pl1MW,
+    uint32_t pl2MW,
+    uint32_t hwpMode,
+    std::string *error
+) {
     TurboMacLimitRequest request = {};
     request.version = TURBOMAC_PROTOCOL_VERSION;
     request.size = sizeof(request);
     request.pl1_mw = pl1MW;
     request.pl2_mw = pl2MW;
     request.watchdog_timeout_ms = 5000U;
-    request.hwp_mode = kTurboMacHWPReleaseMaximum;
+    request.hwp_mode = hwpMode;
     request.sequence = nextSequence();
     return callInput(kTurboMacSelectorArm, &request, sizeof(request), error);
 }

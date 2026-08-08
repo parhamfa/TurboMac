@@ -125,7 +125,9 @@ int main(int argc, char **argv) {
     if (command == "calibrate") {
         if (!confirmation(
                 "CALIBRATE",
-                "Calibration applies an eight-thread AVX2 load. Stay physically present."
+                "Calibration may enable HWP for this boot after installing a 5 W RAPL "
+                "limit. Native restoration then requires a reboot. It also applies an "
+                "eight-thread AVX2 load; stay physically present."
             )) {
             return 2;
         }

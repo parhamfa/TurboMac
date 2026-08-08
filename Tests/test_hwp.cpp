@@ -8,7 +8,7 @@
 int main() {
     static_assert(sizeof(TurboMacCapabilities) == 112U);
     static_assert(sizeof(TurboMacLimitRequest) == 32U);
-    static_assert(sizeof(TurboMacHWPStatus) == 1592U);
+    static_assert(sizeof(TurboMacHWPStatus) == 1600U);
     const uint64_t capabilities = UINT64_C(0x2080c0ff);
     assert(tm_hwp_highest(capabilities) == 0xffU);
     assert(tm_hwp_guaranteed(capabilities) == 0xc0U);
@@ -18,6 +18,24 @@ int main() {
     assert(tm_hwp_capabilities_sane(UINT64_C(0x000000ff)));
     assert(!tm_hwp_capabilities_sane(UINT64_C(0x2080c000)));
     assert(!tm_hwp_capabilities_sane(UINT64_C(0x20f0c080)));
+
+    const uint64_t failSafe = tm_hwp_failsafe_request(capabilities, true);
+    assert(tm_hwp_minimum(failSafe) == 0x20U);
+    assert(tm_hwp_maximum(failSafe) == 0x80U);
+    assert(tm_hwp_desired(failSafe) == 0U);
+    assert(tm_hwp_epp(failSafe) == 0xffU);
+    assert(!tm_hwp_package_control(failSafe));
+    const uint64_t fallbackFailSafe = tm_hwp_failsafe_request(
+        UINT64_C(0x20ffc0ff), false
+    );
+    assert(tm_hwp_maximum(fallbackFailSafe) == 0x20U);
+    assert(tm_hwp_epp(fallbackFailSafe) == 0U);
+    const uint64_t active = tm_hwp_active_request(capabilities, true);
+    assert(tm_hwp_minimum(active) == 0x20U);
+    assert(tm_hwp_maximum(active) == 0xffU);
+    assert(tm_hwp_desired(active) == 0U);
+    assert(tm_hwp_epp(active) == 0x80U);
+    assert(!tm_hwp_package_control(active));
 
     const uint64_t localRequest = UINT64_C(0x30)
         | (UINT64_C(0x70) << TM_HWP_MAXIMUM_SHIFT)

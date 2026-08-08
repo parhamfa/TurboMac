@@ -49,6 +49,7 @@ private:
     static constexpr uint32_t kWatchdogTimeoutMS = 5000U;
     static constexpr uint32_t kWatchdogPollMS = 250U;
     static constexpr uint32_t kPassiveGuardPollMS = 1000U;
+    static constexpr uint32_t kHWPBootstrapLimitMW = 5000U;
 
     static constexpr uint32_t kMSRPowerControl = 0x1fcU;
     static constexpr uint32_t kMSRRAPLPowerUnit = 0x606U;
@@ -62,6 +63,7 @@ private:
     static constexpr uint64_t kEnableBidirProchot = UINT64_C(1);
     static constexpr uint64_t kHWPEnable = UINT64_C(1);
     static constexpr uint32_t kHWPFeatureSupported = 1U << 7U;
+    static constexpr uint32_t kHWPFeatureEPP = 1U << 10U;
     static constexpr uint32_t kHWPFeaturePackageRequest = 1U << 11U;
     static constexpr uint32_t kHWPFeatureFlexibleRequestFields = 1U << 17U;
     static constexpr uint32_t kMaximumLogicalCPUs = TURBOMAC_MAX_LOGICAL_CPUS;
@@ -124,7 +126,10 @@ private:
         const uint8_t present[kMaximumLogicalCPUs]
     ) const;
     bool captureHWPStateLocked();
-    bool applyHWPMaximumLocked();
+    bool bootstrapHWPLocked();
+    bool ensureHWPFailSafeLocked();
+    bool verifyHWPFailSafeLocked() const;
+    bool applyHWPMaximumLocked(uint32_t mode);
     bool verifyHWPOverrideLocked() const;
     bool restoreHWPLocked();
     bool verifyArmedStateLocked();
@@ -174,15 +179,19 @@ private:
     uint64_t hwpCapabilitiesRaw_;
     uint64_t capturedHWPPackageRequest_;
     uint64_t expectedHWPPackageRequest_;
+    uint64_t hwpFailSafeRequest_;
     uint64_t capturedHWPRequests_[kMaximumLogicalCPUs];
     uint64_t expectedHWPRequests_[kMaximumLogicalCPUs];
     uint8_t capturedHWPPresent_[kMaximumLogicalCPUs];
     bool hwpSupported_;
     bool hwpEnabled_;
+    bool hwpEPPSupported_;
     bool hwpFlexibleRequestFields_;
     bool hwpPackageRequestSupported_;
     bool hwpCaptured_;
     bool hwpOverrideActive_;
+    bool hwpEnabledByTurboMac_;
+    bool hwpFailSafeActive_;
     uint64_t lastSequence_;
     uint64_t lastHeartbeat_;
 };

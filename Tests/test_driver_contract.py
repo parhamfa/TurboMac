@@ -15,9 +15,9 @@ with (root / "TurboMac" / "Info.plist").open("rb") as plist_file:
 
 for forbidden in (
     "IA32_MISC_ENABLE",
+    "IA32_PERF_CTL",
     "MSR_TURBO_RATIO_LIMIT",
     "^ 1",
-    "wrmsr64(kMSRHWPEnable",
 ):
     assert forbidden not in driver, forbidden
 
@@ -30,9 +30,11 @@ for required in (
     "setPowerControlGuardLocked(true)",
     "mp_rendezvous_no_intrs(hwpRequestOnCPU",
     "captureHWPStateLocked()",
-    "applyHWPMaximumLocked()",
+    "applyHWPMaximumLocked(request->hwp_mode)",
     "verifyHWPOverrideLocked()",
     "restoreHWPLocked()",
+    "ensureHWPFailSafeLocked()",
+    "wrmsr64(kMSRHWPEnable",
     '"com.parham.turbomac.driver"',
     "TurboMacModuleStart",
     "TurboMacModuleStop",
@@ -55,10 +57,41 @@ assert "verifyArmedStateLocked()" in watchdog
 arm = driver.split("IOReturn TurboMac::arm", 1)[1].split(
     "IOReturn TurboMac::update", 1
 )[0]
-assert arm.index("installLimitsLocked(") < arm.index("applyHWPMaximumLocked()")
-assert arm.index("applyHWPMaximumLocked()") < arm.index(
+assert "kHWPBootstrapLimitMW" in arm
+assert arm.index("installLimitsLocked(") < arm.index("bootstrapHWPLocked()")
+assert arm.index("bootstrapHWPLocked()") < arm.index("applyHWPMaximumLocked(")
+assert arm.count("installLimitsLocked(") >= 2
+assert arm.rindex("installLimitsLocked(") < arm.index("applyHWPMaximumLocked(")
+assert arm.index("applyHWPMaximumLocked(") < arm.index(
     "setPowerControlGuardLocked(false)"
 )
+
+bootstrap = driver.split("bool TurboMac::bootstrapHWPLocked", 1)[1].split(
+    "bool TurboMac::ensureHWPFailSafeLocked", 1
+)[0]
+assert bootstrap.index("verifyLimitsLocked(expectedPackageLimit_)") < bootstrap.index(
+    "wrmsr64(kMSRHWPEnable"
+)
+assert bootstrap.index("allGuardEnabled") < bootstrap.index(
+    "wrmsr64(kMSRHWPEnable"
+)
+assert "wrmsr64(kMSRHWPEnable, kHWPEnable)" in bootstrap
+assert bootstrap.index("wrmsr64(kMSRHWPEnable") < bootstrap.index(
+    "ensureHWPFailSafeLocked()"
+)
+
+restricted = driver.split("bool TurboMac::hwpMaximumRestrictedLocked", 1)[1].split(
+    "bool TurboMac::applyHWPMaximumLocked", 1
+)[0]
+assert "bool anyPresent = false" in restricted
+assert "effective < lowest || effective >= highest" in restricted
+assert "return anyPresent" in restricted
+
+maximum_release = driver.split("bool TurboMac::applyHWPMaximumLocked", 1)[1].split(
+    "bool TurboMac::verifyHWPOverrideLocked", 1
+)[0]
+assert "if (hwpEnabledByTurboMac_)" in maximum_release
+assert "tm_hwp_active_request(" in maximum_release
 
 restore = driver.split("bool TurboMac::restoreLocked", 1)[1].split(
     "void TurboMac::scheduleWatchdogLocked", 1
@@ -105,6 +138,8 @@ assert "calibration precondition failed" in daemon
 assert "passiveHWPReady" in daemon
 assert "armedHWPVerified" in daemon
 assert "hwp_maximum_restricted" in daemon
+assert "hwp_native_restore_requires_reboot" in daemon
+assert "Native restoration then requires a reboot" in cli
 assert "turboMacCalibrationTierResponsive(limit, averagePackage)" in daemon
 assert "calibration_plateau" in daemon
 assert "TurboMacCapabilities statusCapabilities" in daemon

@@ -5,7 +5,7 @@
 
 #define TURBOMAC_SERVICE_NAME "TurboMac"
 #define TURBOMAC_DRIVER_BUNDLE_ID "com.parham.turbomac.driver"
-#define TURBOMAC_PROTOCOL_VERSION 2U
+#define TURBOMAC_PROTOCOL_VERSION 3U
 #define TURBOMAC_MAX_LOGICAL_CPUS 64U
 
 enum TurboMacSelector {
@@ -47,6 +47,7 @@ enum TurboMacCapabilityFlag {
 enum TurboMacHWPMode {
     kTurboMacHWPModeInvalid = 0,
     kTurboMacHWPReleaseMaximum = 1,
+    kTurboMacHWPBootstrapAndReleaseMaximum = 2,
 };
 
 enum TurboMacHWPStatusFlag {
@@ -58,6 +59,9 @@ enum TurboMacHWPStatusFlag {
     kTurboMacHWPStatusOverrideActive = 1U << 5,
     kTurboMacHWPStatusCaptureValid = 1U << 6,
     kTurboMacHWPStatusReadbackValid = 1U << 7,
+    kTurboMacHWPStatusEnabledByTurboMac = 1U << 8,
+    kTurboMacHWPStatusNativeRestoreRequiresReboot = 1U << 9,
+    kTurboMacHWPStatusFailsafeRequestActive = 1U << 10,
 };
 
 enum TurboMacHWPEntryFlag {
@@ -157,6 +161,7 @@ typedef struct TurboMacHWPStatus {
     uint64_t hwp_capabilities_raw;
     uint64_t captured_package_request_raw;
     uint64_t current_package_request_raw;
+    uint64_t failsafe_request_raw;
     TurboMacHWPEntry cpus[TURBOMAC_MAX_LOGICAL_CPUS];
 } TurboMacHWPStatus;
 

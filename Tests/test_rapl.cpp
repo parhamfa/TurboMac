@@ -77,6 +77,10 @@ int main() {
         &request, 10U, 5000U, 45000U, 55000U, 5000U
     ));
     request.watchdog_timeout_ms = 5000U;
+    request.hwp_mode = kTurboMacHWPBootstrapAndReleaseMaximum;
+    assert(tm_validate_limit_request(
+        &request, 10U, 5000U, 45000U, 55000U, 5000U
+    ));
     request.hwp_mode = kTurboMacHWPModeInvalid;
     assert(!tm_validate_limit_request(
         &request, 10U, 5000U, 45000U, 55000U, 5000U

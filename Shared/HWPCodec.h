@@ -85,6 +85,48 @@ static inline uint64_t tm_hwp_with_maximum(uint64_t request, uint32_t maximum) {
         | (((uint64_t)maximum & TM_HWP_PERFORMANCE_MASK) << TM_HWP_MAXIMUM_SHIFT);
 }
 
+static inline uint64_t tm_hwp_make_request(
+    uint32_t minimum,
+    uint32_t maximum,
+    uint32_t desired,
+    uint32_t epp
+) {
+    return ((uint64_t)minimum & TM_HWP_PERFORMANCE_MASK)
+        | (((uint64_t)maximum & TM_HWP_PERFORMANCE_MASK) << TM_HWP_MAXIMUM_SHIFT)
+        | (((uint64_t)desired & TM_HWP_PERFORMANCE_MASK) << TM_HWP_DESIRED_SHIFT)
+        | (((uint64_t)epp & TM_HWP_PERFORMANCE_MASK) << TM_HWP_EPP_SHIFT);
+}
+
+static inline uint64_t tm_hwp_failsafe_request(
+    uint64_t capabilities,
+    bool epp_supported
+) {
+    const uint32_t lowest = tm_hwp_lowest(capabilities);
+    const uint32_t highest = tm_hwp_highest(capabilities);
+    uint32_t maximum = tm_hwp_most_efficient(capabilities);
+    if (maximum < lowest || maximum >= highest) {
+        maximum = lowest;
+    }
+    return tm_hwp_make_request(
+        lowest,
+        maximum,
+        0U,
+        epp_supported ? 0xffU : 0U
+    );
+}
+
+static inline uint64_t tm_hwp_active_request(
+    uint64_t capabilities,
+    bool epp_supported
+) {
+    return tm_hwp_make_request(
+        tm_hwp_lowest(capabilities),
+        tm_hwp_highest(capabilities),
+        0U,
+        epp_supported ? 0x80U : 0U
+    );
+}
+
 static inline uint64_t tm_hwp_with_local_maximum_override(
     uint64_t request,
     uint32_t maximum,

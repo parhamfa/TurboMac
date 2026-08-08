@@ -1,7 +1,7 @@
 # TurboMac Dynamic RAPL Governor
 
 This fork replaces TurboMac's one-shot HWP and XOR writes with a passive-first,
-package-scoped Intel RAPL governor and a narrow, reversible HWP maximum release.
+package-scoped Intel RAPL governor and an explicit, boot-scoped HWP transition.
 It was designed specifically for a
 2017 MacBook Pro 14,3 with an Intel Core i7-7820HQ, no battery, and a USB-C
 input-power failure mode.
@@ -15,12 +15,19 @@ types, macOS version, and build.
 
 Package RAPL PL1/PL2 provide the actual power limit. The limit applies to the
 whole Intel CPU package, so native processes and VM workloads receive the same
-package budget. After RAPL is installed and verified, the KEXT may change only
-the effective `IA32_HWP_REQUEST.Maximum_Performance` field from Apple's captured
-ceiling to the CPU's advertised highest value. It preserves minimum, desired,
-EPP, activity window, and package-control fields. It never enables HWP, changes
-per-process controls, writes unlisted MSRs, sets the RAPL lock bit, or raises a
-RAPL limit above Apple's captured value.
+package budget. This Mac boots with HWP disabled and a legacy XCPM ceiling. To
+escape that ceiling safely, the KEXT can enable HWP only after it has installed
+and read back a package limit no higher than 5 W, while Apple's guard is still
+enabled. It then installs a conservative HWP request on every logical CPU,
+restores the requested governed RAPL limit, releases the HWP maximum, and only
+then clears the guard.
+
+`IA32_PM_ENABLE.HWP_ENABLE` cannot be cleared without a processor reset. Thus,
+disarm cannot return this boot to its original non-HWP state; it means “Apple
+guard on, conservative HWP fail-safe active, captured Apple RAPL restored.” A
+reboot is required for native non-HWP restoration. The KEXT never writes
+`IA32_PERF_CTL`, changes per-process controls, writes arbitrary MSRs, sets the
+RAPL lock bit, or raises a RAPL limit above Apple's captured value.
 
 Discrete GPU, display, USB devices, storage, conversion losses, and other power
 rails remain outside CPU RAPL. This can reduce CPU-caused input surges; it cannot
@@ -55,22 +62,35 @@ logs `non_cpu_over_budget` and keeps the CPU at that floor.
 
 The KEXT starts passive, restores Apple's bidirectional PROCHOT guard if an old
 bypass or late macOS power-management initialization leaves it disabled, and
-rechecks every second while passive. It permits one root client. On arm it:
+rechecks every second while passive. It permits one root client. If HWP is still
+disabled, the first arm follows this order:
 
-1. captures Apple's package limits and every logical CPU's exact HWP request,
-   then verifies the guard on every logical CPU;
-2. requires a real HWP maximum restriction to be visible;
-3. installs and verifies conservative package limits;
-4. releases only the effective HWP maximum and verifies every logical CPU;
-5. only then clears bidirectional PROCHOT enable bit 0 on every logical CPU.
+1. capture Apple's package limits and verify the guard on every logical CPU;
+2. install and read back a RAPL bootstrap limit at or below 5 W;
+3. enable package-scoped HWP, read its capabilities and every logical CPU's
+   default request, then install and verify a conservative request everywhere;
+4. install and verify the daemon's requested RAPL limits while the conservative
+   HWP request and Apple guard are still active;
+5. install a balanced autonomous HWP request using Intel's default EPP of 128,
+   release its maximum, and verify every logical CPU;
+6. only then clear bidirectional PROCHOT enable bit 0 on every logical CPU.
 
-It restores Apple's guard first, then the exact captured HWP requests, then the
-captured RAPL limits on daemon disconnect, malformed commands, unsafe readback,
-explicit disarm, driver stop, or a five-second heartbeat timeout. It does not
-continuously fight an HWP value rewritten by macOS; a mismatch enters fail-safe.
+When HWP was already enabled before this driver enabled it, arm instead requires
+every logical CPU to have a readable restricted maximum and captures those
+requests exactly. On daemon disconnect, malformed commands, unsafe readback,
+explicit disarm, driver stop, or a five-second heartbeat timeout, restoration
+always enables Apple's guard first. For HWP enabled by TurboMac it then installs
+the conservative per-CPU request before restoring Apple's RAPL limits. If that
+request cannot be verified, the low RAPL limit is retained rather than restoring
+Apple's higher limit. While passive, the watchdog re-verifies both the guard and
+the conservative request every second. Status reports whether TurboMac enabled
+HWP, whether the fail-safe has exact readback, and whether native restoration
+requires a reboot.
+
 Auto-arm requires ten continuous seconds of valid telemetry, a protected
 root-owned profile, exact identity matching, and a prior successful fixed
-Whisper validation.
+Whisper validation. On a later boot, auto-arm still passes through the same
+verified 5 W HWP bootstrap stage.
 
 ## Build and test
 
@@ -122,7 +142,8 @@ sudo /usr/local/libexec/turbomac-rollback \
   "/Library/Application Support/TurboMac/rollback/TIMESTAMP"
 ```
 
-After the passive reboot and SSH verification:
+After the passive reboot and SSH verification, `status` should show HWP
+supported but disabled, Apple guard enabled, and the governor disarmed. Then:
 
 ```sh
 sudo turbomacctl status
@@ -133,13 +154,16 @@ sudo turbomacctl disarm
 sudo turbomacctl logs
 ```
 
-Calibration requires an interactive confirmation and physical supervision. It
-uses an eight-thread deterministic AVX2 load, three 30-second runs per 2 W PL1
-step, and repeated five-second PL2 bursts. Progress is streamed as each run is
+Calibration requires an interactive confirmation and physical supervision. Its
+first 5 W arm may perform the reset-only HWP transition described above. It uses
+an eight-thread deterministic AVX2 load, three 30-second runs per 2 W PL1 step,
+and repeated five-second PL2 bursts. Progress is streamed as each run is
 measured. It aborts on `PDTR >= 52 W`, CPU temperature `>= 95 C`, ACPW change
 over 5%, a read failure, or a limit mismatch; it discards a non-responsive RAPL
-tier and conservatively stops a sweep at 50 W. Calibration leaves auto-arm
-disabled. Only a successful protected, fixed Whisper workload enables it.
+tier and conservatively stops a sweep at 50 W. Calibration finishes disarmed,
+which leaves HWP enabled under its conservative fail-safe until reboot. It also
+leaves auto-arm disabled. Only a successful protected, fixed Whisper workload
+enables auto-arm.
 
 `Deploy/configure-whisper-validation.sh` copies a model, audio fixture, Whisper
 binary, and all non-system libraries into a root-owned, hash-pinned bundle. The
