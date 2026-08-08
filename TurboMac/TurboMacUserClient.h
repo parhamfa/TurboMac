@@ -53,6 +53,11 @@ private:
         void *reference,
         IOExternalMethodArguments *arguments
     );
+    static IOReturn getHWPStatus(
+        OSObject *target,
+        void *reference,
+        IOExternalMethodArguments *arguments
+    );
 
     IOReturn closeOnce();
     IOReturn rejectInvalid();

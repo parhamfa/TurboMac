@@ -47,6 +47,7 @@ restore_failed_install() {
     /usr/local/libexec/turbomacd \
     /usr/local/libexec/turbomac-avx2-load \
     /usr/local/libexec/turbomac-finalize-passive \
+    /usr/local/libexec/turbomac-rollback \
     /usr/local/bin/turbomacctl \
     /Library/LaunchDaemons/com.parham.turbomacd.plist; do
     if [[ -e "$target" ]]; then
@@ -63,6 +64,7 @@ restore_failed_install() {
     /usr/local/libexec/turbomacd \
     /usr/local/libexec/turbomac-avx2-load \
     /usr/local/libexec/turbomac-finalize-passive \
+    /usr/local/libexec/turbomac-rollback \
     /usr/local/bin/turbomacctl \
     /Library/LaunchDaemons/com.parham.turbomacd.plist; do
     local saved
@@ -100,6 +102,20 @@ csrutil status >"$BACKUP_DIR/sip.txt" 2>&1 || true
 csrutil authenticated-root status >"$BACKUP_DIR/authenticated-root.txt" 2>&1 || true
 kmutil showloaded >"$BACKUP_DIR/kmutil-showloaded.txt" 2>&1 || true
 kextstat >"$BACKUP_DIR/kextstat.txt" 2>&1 || true
+launchctl print system/com.parham.turbomacd \
+  >"$BACKUP_DIR/launchctl-turbomacd.txt" 2>&1 || true
+ps -axo pid,ppid,user,lstart,command \
+  >"$BACKUP_DIR/processes-before.txt" 2>&1 || true
+for live_file in \
+  /Library/Extensions/TurboMac.kext/Contents/MacOS/TurboMac \
+  /usr/local/libexec/turbomacd \
+  /usr/local/libexec/turbomac-avx2-load \
+  /usr/local/bin/turbomacctl \
+  /Library/LaunchDaemons/com.parham.turbomacd.plist; do
+  if [[ -f "$live_file" ]]; then
+    shasum -a 256 "$live_file" >>"$BACKUP_DIR/live-files-before-sha256.txt"
+  fi
+done
 if [[ -f /Library/KernelCollections/AuxiliaryKernelExtensions.kc ]]; then
   ditto /Library/KernelCollections/AuxiliaryKernelExtensions.kc "$BACKUP_DIR/AuxiliaryKernelExtensions.kc.before"
   shasum -a 256 /Library/KernelCollections/AuxiliaryKernelExtensions.kc >"$BACKUP_DIR/auxkc-before-sha256.txt"
@@ -121,6 +137,7 @@ for target in \
   /usr/local/libexec/turbomacd \
   /usr/local/libexec/turbomac-avx2-load \
   /usr/local/libexec/turbomac-finalize-passive \
+  /usr/local/libexec/turbomac-rollback \
   /usr/local/bin/turbomacctl \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   if [[ -e "$target" ]]; then
@@ -139,6 +156,7 @@ install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/bin/turbomacctl" /usr/l
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomacd" /usr/local/libexec/turbomacd
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomac-avx2-load" /usr/local/libexec/turbomac-avx2-load
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomac-finalize-passive" /usr/local/libexec/turbomac-finalize-passive
+install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomac-rollback" /usr/local/libexec/turbomac-rollback
 install -m 0644 -o root -g wheel "$PACKAGE_DIR/Library/LaunchDaemons/com.parham.turbomacd.plist" /Library/LaunchDaemons/com.parham.turbomacd.plist
 
 codesign --verify --strict --verbose=4 "$KEXT_TARGET"

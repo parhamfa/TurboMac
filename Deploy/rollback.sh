@@ -31,6 +31,7 @@ for target in \
   /usr/local/libexec/turbomacd \
   /usr/local/libexec/turbomac-avx2-load \
   /usr/local/libexec/turbomac-finalize-passive \
+  /usr/local/libexec/turbomac-rollback \
   /usr/local/bin/turbomacctl \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   if [[ -e "$target" ]]; then
@@ -47,6 +48,7 @@ for target in \
   /usr/local/libexec/turbomacd \
   /usr/local/libexec/turbomac-avx2-load \
   /usr/local/libexec/turbomac-finalize-passive \
+  /usr/local/libexec/turbomac-rollback \
   /usr/local/bin/turbomacctl \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   saved="$BACKUP_DIR/original-$(basename "$target")"

@@ -55,6 +55,10 @@ bool DriverClient::status(TurboMacDriverStatus *output, std::string *error) cons
     return callOutput(kTurboMacSelectorGetStatus, output, sizeof(*output), error);
 }
 
+bool DriverClient::hwpStatus(TurboMacHWPStatus *output, std::string *error) const {
+    return callOutput(kTurboMacSelectorGetHWPStatus, output, sizeof(*output), error);
+}
+
 bool DriverClient::arm(uint32_t pl1MW, uint32_t pl2MW, std::string *error) {
     TurboMacLimitRequest request = {};
     request.version = TURBOMAC_PROTOCOL_VERSION;
@@ -62,6 +66,7 @@ bool DriverClient::arm(uint32_t pl1MW, uint32_t pl2MW, std::string *error) {
     request.pl1_mw = pl1MW;
     request.pl2_mw = pl2MW;
     request.watchdog_timeout_ms = 5000U;
+    request.hwp_mode = kTurboMacHWPReleaseMaximum;
     request.sequence = nextSequence();
     return callInput(kTurboMacSelectorArm, &request, sizeof(request), error);
 }
@@ -73,6 +78,7 @@ bool DriverClient::update(uint32_t pl1MW, uint32_t pl2MW, std::string *error) {
     request.pl1_mw = pl1MW;
     request.pl2_mw = pl2MW;
     request.watchdog_timeout_ms = 5000U;
+    request.hwp_mode = kTurboMacHWPReleaseMaximum;
     request.sequence = nextSequence();
     return callInput(kTurboMacSelectorUpdate, &request, sizeof(request), error);
 }

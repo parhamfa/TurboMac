@@ -1,7 +1,8 @@
 # TurboMac Dynamic RAPL Governor
 
 This fork replaces TurboMac's one-shot HWP and XOR writes with a passive-first,
-package-scoped Intel RAPL governor. It was designed specifically for a
+package-scoped Intel RAPL governor and a narrow, reversible HWP maximum release.
+It was designed specifically for a
 2017 MacBook Pro 14,3 with an Intel Core i7-7820HQ, no battery, and a USB-C
 input-power failure mode.
 
@@ -12,10 +13,14 @@ types, macOS version, and build.
 
 ## What it controls
 
-Only package RAPL PL1/PL2 are changed. The limit applies to the whole Intel CPU
-package, so native processes and VM workloads receive the same package budget.
-The governor never writes HWP, per-process controls, arbitrary MSRs, or the RAPL
-lock bit, and it never raises either limit above Apple's captured value.
+Package RAPL PL1/PL2 provide the actual power limit. The limit applies to the
+whole Intel CPU package, so native processes and VM workloads receive the same
+package budget. After RAPL is installed and verified, the KEXT may change only
+the effective `IA32_HWP_REQUEST.Maximum_Performance` field from Apple's captured
+ceiling to the CPU's advertised highest value. It preserves minimum, desired,
+EPP, activity window, and package-control fields. It never enables HWP, changes
+per-process controls, writes unlisted MSRs, sets the RAPL lock bit, or raises a
+RAPL limit above Apple's captured value.
 
 Discrete GPU, display, USB devices, storage, conversion losses, and other power
 rails remain outside CPU RAPL. This can reduce CPU-caused input surges; it cannot
@@ -52,21 +57,24 @@ The KEXT starts passive, restores Apple's bidirectional PROCHOT guard if an old
 bypass or late macOS power-management initialization leaves it disabled, and
 rechecks every second while passive. It permits one root client. On arm it:
 
-1. captures Apple's package limits and verifies the guard on every logical CPU;
-2. installs and verifies conservative package limits;
-3. only then clears bidirectional PROCHOT enable bit 0 on every logical CPU.
+1. captures Apple's package limits and every logical CPU's exact HWP request,
+   then verifies the guard on every logical CPU;
+2. requires a real HWP maximum restriction to be visible;
+3. installs and verifies conservative package limits;
+4. releases only the effective HWP maximum and verifies every logical CPU;
+5. only then clears bidirectional PROCHOT enable bit 0 on every logical CPU.
 
-It restores Apple's guard before the captured RAPL limits on daemon disconnect,
-malformed commands, unsafe readback, explicit disarm, driver stop, or a five-
-second heartbeat timeout. Auto-arm requires ten continuous seconds of valid
-telemetry, a protected root-owned profile, exact identity matching, and a prior
-successful fixed Whisper validation.
+It restores Apple's guard first, then the exact captured HWP requests, then the
+captured RAPL limits on daemon disconnect, malformed commands, unsafe readback,
+explicit disarm, driver stop, or a five-second heartbeat timeout. It does not
+continuously fight an HWP value rewritten by macOS; a mismatch enters fail-safe.
+Auto-arm requires ten continuous seconds of valid telemetry, a protected
+root-owned profile, exact identity matching, and a prior successful fixed
+Whisper validation.
 
 ## Build and test
 
-Xcode 26's toolchain and SDK are used directly because this repository's legacy
-Xcode project can be unusable when the installed Xcode is newer than the local
-macOS private frameworks.
+Xcode 26's toolchain and SDK are used directly.
 
 ```sh
 ./script/build_and_run.sh
@@ -75,9 +83,10 @@ macOS private frameworks.
 This runs unit tests, builds all deployment artifacts as `x86_64`, ad-hoc signs
 them, verifies signatures and plists, and creates `build/package`. On an x86_64
 target it also runs `kmutil print-diagnostics -z` for this explicitly
-SIP-disabled, ad-hoc-signed installation. Tests cover RAPL encoding,
-32-bit energy wraparound, malformed requests, watchdog timing, controller
-scaling, transitions, hysteresis, slew limiting, and the 45/52/58 paths.
+SIP-disabled, ad-hoc-signed installation. Tests cover RAPL encoding, HWP field
+preservation and package/local source selection, 32-bit energy wraparound,
+malformed requests, watchdog timing, controller scaling, transitions,
+hysteresis, slew limiting, and the 45/52/58 paths.
 
 Historical observer logs can be replayed without actuation:
 
@@ -105,6 +114,13 @@ the AuxKC. The scripts use the documented `kmutil load` staging flow so
 `kernelmanagerd` rebuilds only the auxiliary collection; they do not invoke the
 system-only `kmutil install --update-all` path or attempt to write the sealed
 boot/system collections.
+
+The packaged rollback command is:
+
+```sh
+sudo /usr/local/libexec/turbomac-rollback \
+  "/Library/Application Support/TurboMac/rollback/TIMESTAMP"
+```
 
 After the passive reboot and SSH verification:
 

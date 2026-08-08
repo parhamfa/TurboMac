@@ -5,7 +5,8 @@
 
 #define TURBOMAC_SERVICE_NAME "TurboMac"
 #define TURBOMAC_DRIVER_BUNDLE_ID "com.parham.turbomac.driver"
-#define TURBOMAC_PROTOCOL_VERSION 1U
+#define TURBOMAC_PROTOCOL_VERSION 2U
+#define TURBOMAC_MAX_LOGICAL_CPUS 64U
 
 enum TurboMacSelector {
     kTurboMacSelectorGetCapabilities = 0,
@@ -14,7 +15,8 @@ enum TurboMacSelector {
     kTurboMacSelectorUpdate = 3,
     kTurboMacSelectorDisarm = 4,
     kTurboMacSelectorGetStatus = 5,
-    kTurboMacSelectorCount = 6,
+    kTurboMacSelectorGetHWPStatus = 6,
+    kTurboMacSelectorCount = 7,
 };
 
 enum TurboMacDriverState {
@@ -38,6 +40,31 @@ enum TurboMacCapabilityFlag {
     kTurboMacCapabilityPowerInfoValid = 1U << 1,
     kTurboMacCapabilityLimitLocked = 1U << 2,
     kTurboMacCapabilityBidirProchotEnabled = 1U << 3,
+    kTurboMacCapabilityHWPSupported = 1U << 4,
+    kTurboMacCapabilityHWPEnabled = 1U << 5,
+};
+
+enum TurboMacHWPMode {
+    kTurboMacHWPModeInvalid = 0,
+    kTurboMacHWPReleaseMaximum = 1,
+};
+
+enum TurboMacHWPStatusFlag {
+    kTurboMacHWPStatusSupported = 1U << 0,
+    kTurboMacHWPStatusEnabled = 1U << 1,
+    kTurboMacHWPStatusFlexibleRequestFields = 1U << 2,
+    kTurboMacHWPStatusPackageControlSupported = 1U << 3,
+    kTurboMacHWPStatusMaximumRestricted = 1U << 4,
+    kTurboMacHWPStatusOverrideActive = 1U << 5,
+    kTurboMacHWPStatusCaptureValid = 1U << 6,
+    kTurboMacHWPStatusReadbackValid = 1U << 7,
+};
+
+enum TurboMacHWPEntryFlag {
+    kTurboMacHWPEntryPresent = 1U << 0,
+    kTurboMacHWPEntryPackageControl = 1U << 1,
+    kTurboMacHWPEntryMaximumFromLocalRequest = 1U << 2,
+    kTurboMacHWPEntryModified = 1U << 3,
 };
 
 typedef struct TurboMacCapabilities {
@@ -57,6 +84,11 @@ typedef struct TurboMacCapabilities {
     uint64_t package_power_info_raw;
     uint64_t current_package_limit_raw;
     uint64_t current_power_control_raw;
+    uint32_t hwp_cpuid_eax;
+    uint32_t reserved0;
+    uint64_t hwp_pm_enable_raw;
+    uint64_t hwp_capabilities_raw;
+    uint64_t current_hwp_package_request_raw;
 } TurboMacCapabilities;
 
 typedef struct TurboMacTelemetry {
@@ -79,7 +111,7 @@ typedef struct TurboMacLimitRequest {
     uint32_t pl1_mw;
     uint32_t pl2_mw;
     uint32_t watchdog_timeout_ms;
-    uint32_t reserved0;
+    uint32_t hwp_mode;
     uint64_t sequence;
 } TurboMacLimitRequest;
 
@@ -106,5 +138,26 @@ typedef struct TurboMacDriverStatus {
     uint64_t current_package_limit_raw;
     uint64_t current_power_control_raw;
 } TurboMacDriverStatus;
+
+typedef struct TurboMacHWPEntry {
+    uint32_t cpu_index;
+    uint32_t flags;
+    uint64_t captured_request_raw;
+    uint64_t current_request_raw;
+} TurboMacHWPEntry;
+
+typedef struct TurboMacHWPStatus {
+    uint32_t version;
+    uint32_t size;
+    uint32_t flags;
+    uint32_t logical_cpu_count;
+    uint32_t hwp_cpuid_eax;
+    uint32_t hwp_mode;
+    uint64_t hwp_pm_enable_raw;
+    uint64_t hwp_capabilities_raw;
+    uint64_t captured_package_request_raw;
+    uint64_t current_package_request_raw;
+    TurboMacHWPEntry cpus[TURBOMAC_MAX_LOGICAL_CPUS];
+} TurboMacHWPStatus;
 
 #endif

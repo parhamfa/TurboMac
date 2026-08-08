@@ -51,6 +51,13 @@ IOExternalMethodDispatch TurboMacUserClient::dispatchTable_[kTurboMacSelectorCou
         0U,
         sizeof(TurboMacDriverStatus),
     },
+    {
+        &TurboMacUserClient::getHWPStatus,
+        0U,
+        0U,
+        0U,
+        sizeof(TurboMacHWPStatus),
+    },
 };
 
 bool TurboMacUserClient::start(IOService *provider) {
@@ -219,6 +226,26 @@ IOReturn TurboMacUserClient::getStatus(
     }
     TurboMacDriverStatus output = {};
     const IOReturn result = client->driver_->copyStatus(&output);
+    if (result == kIOReturnSuccess) {
+        bcopy(&output, arguments->structureOutput, sizeof(output));
+        arguments->structureOutputSize = sizeof(output);
+    }
+    return result;
+}
+
+IOReturn TurboMacUserClient::getHWPStatus(
+    OSObject *target,
+    void *reference,
+    IOExternalMethodArguments *arguments
+) {
+    (void)reference;
+    TurboMacUserClient *client = OSDynamicCast(TurboMacUserClient, target);
+    if (client == nullptr || client->driver_ == nullptr
+        || arguments == nullptr || arguments->structureOutput == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    TurboMacHWPStatus output = {};
+    const IOReturn result = client->driver_->copyHWPStatus(&output);
     if (result == kIOReturnSuccess) {
         bcopy(&output, arguments->structureOutput, sizeof(output));
         arguments->structureOutputSize = sizeof(output);

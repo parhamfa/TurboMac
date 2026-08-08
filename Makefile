@@ -31,7 +31,7 @@ $(KEXT_MACOS):
 $(RELEASE):
 	mkdir -p "$@"
 
-$(OBJ)/TurboMac.o: TurboMac/TurboMac.cpp TurboMac/TurboMac.h TurboMac/TurboMacUserClient.h Shared/TurboMacProtocol.h Shared/RAPLCodec.h Shared/DriverValidation.h | $(OBJ)
+$(OBJ)/TurboMac.o: TurboMac/TurboMac.cpp TurboMac/TurboMac.h TurboMac/TurboMacUserClient.h Shared/TurboMacProtocol.h Shared/HWPCodec.h Shared/RAPLCodec.h Shared/DriverValidation.h | $(OBJ)
 	$(CXX) $(KEXT_CXXFLAGS) -c "$<" -o "$@"
 
 $(OBJ)/TurboMacUserClient.o: TurboMac/TurboMacUserClient.cpp TurboMac/TurboMacUserClient.h TurboMac/TurboMac.h Shared/TurboMacProtocol.h | $(OBJ)
@@ -56,7 +56,7 @@ $(OBJ)/Profile.o: Daemon/Profile.cpp Daemon/Profile.h | $(OBJ)
 $(OBJ)/TemperatureReader.o: Daemon/TemperatureReader.cpp Daemon/TemperatureReader.h | $(OBJ)
 	$(CXX) $(USER_CXXFLAGS) -c "$<" -o "$@"
 
-$(OBJ)/DaemonMain.o: Daemon/main.cpp Daemon/Calibration.h Daemon/DriverClient.h Daemon/Energy.h Daemon/Policy.h Daemon/Profile.h Daemon/SMCReader.h Daemon/TemperatureReader.h | $(OBJ)
+$(OBJ)/DaemonMain.o: Daemon/main.cpp Daemon/Calibration.h Daemon/DriverClient.h Daemon/Energy.h Daemon/Policy.h Daemon/Profile.h Daemon/SMCReader.h Daemon/TemperatureReader.h Shared/HWPCodec.h Shared/RAPLCodec.h | $(OBJ)
 	$(CXX) $(USER_CXXFLAGS) -c "$<" -o "$@"
 
 $(RELEASE)/turbomacd: $(OBJ)/DaemonMain.o $(OBJ)/DriverClient.o $(OBJ)/Policy.o $(OBJ)/Profile.o $(OBJ)/TemperatureReader.o $(OBJ)/SMCReader.o | $(RELEASE)
@@ -83,6 +83,7 @@ package: sign
 	install -m 0755 "$(RELEASE)/turbomacd" "$(PACKAGE)/usr/local/libexec/turbomacd"
 	install -m 0755 "$(RELEASE)/turbomac-avx2-load" "$(PACKAGE)/usr/local/libexec/turbomac-avx2-load"
 	install -m 0755 Deploy/finalize-passive.sh "$(PACKAGE)/usr/local/libexec/turbomac-finalize-passive"
+	install -m 0755 Deploy/rollback.sh "$(PACKAGE)/usr/local/libexec/turbomac-rollback"
 
 verify: package
 	plutil -lint "$(KEXT)/Contents/Info.plist" Deploy/com.parham.turbomacd.plist
@@ -94,8 +95,9 @@ verify: package
 	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _TurboMacModuleStop$$'
 	@if [[ "$$(uname -m)" == "x86_64" ]]; then kmutil print-diagnostics -a x86_64 -z -p "$(KEXT)"; else echo "kmutil loadability diagnostics deferred to the x86_64 target host"; fi
 
-test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/test_calibration $(BUILD)/tests/replay_observer
+test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_hwp $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/test_calibration $(BUILD)/tests/replay_observer
 	"$(BUILD)/tests/test_rapl"
+	"$(BUILD)/tests/test_hwp"
 	"$(BUILD)/tests/test_policy"
 	"$(BUILD)/tests/test_temperature"
 	"$(BUILD)/tests/test_calibration"
@@ -106,6 +108,9 @@ $(BUILD)/tests:
 
 $(BUILD)/tests/test_rapl: Tests/test_rapl.cpp Daemon/Energy.h Shared/DriverValidation.h Shared/RAPLCodec.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IShared -IDaemon "$<" -o "$@"
+
+$(BUILD)/tests/test_hwp: Tests/test_hwp.cpp Shared/HWPCodec.h | $(BUILD)/tests
+	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IShared "$<" -o "$@"
 
 $(BUILD)/tests/test_policy: Tests/test_policy.cpp Daemon/Policy.cpp Daemon/Policy.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IShared -IDaemon Tests/test_policy.cpp Daemon/Policy.cpp -o "$@"

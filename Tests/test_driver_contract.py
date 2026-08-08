@@ -14,11 +14,10 @@ with (root / "TurboMac" / "Info.plist").open("rb") as plist_file:
     driver_info = plistlib.load(plist_file)
 
 for forbidden in (
-    "IA32_HWP_REQUEST",
-    "IA32_PM_ENABLE",
     "IA32_MISC_ENABLE",
     "MSR_TURBO_RATIO_LIMIT",
     "^ 1",
+    "wrmsr64(kMSRHWPEnable",
 ):
     assert forbidden not in driver, forbidden
 
@@ -29,6 +28,11 @@ for required in (
     "mp_rendezvous_no_intrs(powerControlOnCPU",
     "setPowerControlGuardLocked(false)",
     "setPowerControlGuardLocked(true)",
+    "mp_rendezvous_no_intrs(hwpRequestOnCPU",
+    "captureHWPStateLocked()",
+    "applyHWPMaximumLocked()",
+    "verifyHWPOverrideLocked()",
+    "restoreHWPLocked()",
     '"com.parham.turbomac.driver"',
     "TurboMacModuleStart",
     "TurboMacModuleStop",
@@ -46,6 +50,25 @@ watchdog = driver.split("void TurboMac::watchdogFired", 1)[1].split(
 )[0]
 assert "ensurePassiveGuardLocked()" in watchdog
 assert "sender->setTimeoutMS(kPassiveGuardPollMS)" in watchdog
+assert "verifyArmedStateLocked()" in watchdog
+
+arm = driver.split("IOReturn TurboMac::arm", 1)[1].split(
+    "IOReturn TurboMac::update", 1
+)[0]
+assert arm.index("installLimitsLocked(") < arm.index("applyHWPMaximumLocked()")
+assert arm.index("applyHWPMaximumLocked()") < arm.index(
+    "setPowerControlGuardLocked(false)"
+)
+
+restore = driver.split("bool TurboMac::restoreLocked", 1)[1].split(
+    "void TurboMac::scheduleWatchdogLocked", 1
+)[0]
+assert restore.index("setPowerControlGuardLocked(true)") < restore.index(
+    "restoreHWPLocked()"
+)
+assert restore.index("restoreHWPLocked()") < restore.index(
+    "wrmsr64(kMSRPackagePowerLimit"
+)
 
 disconnect = driver.split("void TurboMac::clientDisconnected()", 1)[1].split(
     "void TurboMac::watchdogFired", 1
@@ -67,6 +90,7 @@ for payload in (
     "sizeof(TurboMacLimitRequest)",
     "sizeof(TurboMacCommandRequest)",
     "sizeof(TurboMacDriverStatus)",
+    "sizeof(TurboMacHWPStatus)",
 ):
     assert payload in client, payload
 assert "kTurboMacSelectorCount" in (root / "Shared" / "TurboMacProtocol.h").read_text()
@@ -78,6 +102,9 @@ assert "apple_guard_enabled" in daemon
 assert "rapl_locked" in daemon
 assert "current_power_control_raw" in daemon
 assert "calibration precondition failed" in daemon
+assert "passiveHWPReady" in daemon
+assert "armedHWPVerified" in daemon
+assert "hwp_maximum_restricted" in daemon
 assert "turboMacCalibrationTierResponsive(limit, averagePackage)" in daemon
 assert "calibration_plateau" in daemon
 assert "TurboMacCapabilities statusCapabilities" in daemon
@@ -92,6 +119,9 @@ assert 'KEXT_POLICY_EXIT=27' in installer
 assert 'pending-kext-operation' in installer
 assert 'INSTALL_COMPLETE=1' in installer
 assert 'grep -F "$bundle_id"' in installer
+assert 'launchctl-turbomacd.txt' in installer
+assert 'live-files-before-sha256.txt' in installer
+assert 'turbomac-rollback' in installer
 assert 'KEXT_POLICY_EXIT=27' in finalizer
 assert 'do not reboot' in finalizer
 assert driver_info["OSBundleLibraries"] == {

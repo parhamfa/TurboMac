@@ -6,6 +6,7 @@
 #include "SMCReader.h"
 #include "TemperatureReader.h"
 
+#include "../Shared/HWPCodec.h"
 #include "../Shared/RAPLCodec.h"
 
 #include <arpa/inet.h>
@@ -611,6 +612,46 @@ private:
         return true;
     }
 
+    bool passiveHWPReady(TurboMacHWPStatus *status, std::string *error) {
+        if (status == nullptr || !driver_.hwpStatus(status, error)
+            || status->version != TURBOMAC_PROTOCOL_VERSION
+            || status->size != sizeof(*status)) {
+            return setError(error, "could not read a compatible HWP status payload");
+        }
+        const uint32_t required = kTurboMacHWPStatusSupported
+            | kTurboMacHWPStatusEnabled
+            | kTurboMacHWPStatusMaximumRestricted
+            | kTurboMacHWPStatusReadbackValid;
+        if ((status->flags & required) != required
+            || (status->flags & kTurboMacHWPStatusOverrideActive) != 0U) {
+            std::ostringstream detail;
+            detail << "HWP precondition failed: flags=0x" << std::hex
+                   << status->flags
+                   << " (requires enabled, readable, maximum-restricted passive state)";
+            return setError(error, detail.str());
+        }
+        return true;
+    }
+
+    bool armedHWPVerified(std::string *error) {
+        TurboMacHWPStatus status = {};
+        if (!driver_.hwpStatus(&status, error)
+            || status.version != TURBOMAC_PROTOCOL_VERSION
+            || status.size != sizeof(status)) {
+            return setError(error, "could not read a compatible armed HWP status payload");
+        }
+        const uint32_t required = kTurboMacHWPStatusSupported
+            | kTurboMacHWPStatusEnabled
+            | kTurboMacHWPStatusOverrideActive
+            | kTurboMacHWPStatusCaptureValid
+            | kTurboMacHWPStatusReadbackValid;
+        if ((status.flags & required) != required
+            || status.hwp_mode != kTurboMacHWPReleaseMaximum) {
+            return setError(error, "HWP maximum-release readback did not match");
+        }
+        return true;
+    }
+
     bool armGovernor(const std::string &reason, std::string *error) {
         const double now = monotonicSeconds();
         const PolicySnapshot snapshot = policy_.evaluate(now);
@@ -628,6 +669,10 @@ private:
             || (currentCapabilities.flags & kTurboMacCapabilityLimitLocked) != 0U) {
             return setError(error, "Apple guard is not enabled or package RAPL is locked");
         }
+        TurboMacHWPStatus passiveHWP = {};
+        if (!passiveHWPReady(&passiveHWP, error)) {
+            return false;
+        }
 
         const uint32_t pl1MW = wattsToMW(snapshot.pl1W);
         const uint32_t pl2MW = wattsToMW(snapshot.pl2W);
@@ -638,7 +683,8 @@ private:
         if (!driver_.status(&status, error)
             || status.driver_state != kTurboMacDriverArmed
             || std::abs((int64_t)status.applied_pl1_mw - (int64_t)pl1MW) > 200
-            || std::abs((int64_t)status.applied_pl2_mw - (int64_t)pl2MW) > 200) {
+            || std::abs((int64_t)status.applied_pl2_mw - (int64_t)pl2MW) > 200
+            || !armedHWPVerified(error)) {
             std::string ignored;
             driver_.disarm(&ignored);
             return setError(error, "RAPL arm readback did not match the requested limits");
@@ -650,6 +696,12 @@ private:
     }
 
     bool setManualLimits(double pl1W, double pl2W, std::string *error) {
+        if (!armed_) {
+            TurboMacHWPStatus passiveHWP = {};
+            if (!passiveHWPReady(&passiveHWP, error)) {
+                return false;
+            }
+        }
         const uint32_t pl1MW = wattsToMW(pl1W);
         const uint32_t pl2MW = wattsToMW(pl2W);
         const bool success = armed_
@@ -662,8 +714,11 @@ private:
         if (!driver_.status(&status, error)
             || status.driver_state != kTurboMacDriverArmed
             || std::abs((int64_t)status.applied_pl1_mw - (int64_t)pl1MW) > 200
-            || std::abs((int64_t)status.applied_pl2_mw - (int64_t)pl2MW) > 200) {
-            return setError(error, "manual RAPL limit readback mismatch");
+            || std::abs((int64_t)status.applied_pl2_mw - (int64_t)pl2MW) > 200
+            || !armedHWPVerified(error)) {
+            std::string ignored;
+            driver_.disarm(&ignored);
+            return setError(error, "manual RAPL/HWP readback mismatch");
         }
         armed_ = true;
         lastDriverUpdateTime_ = monotonicSeconds();
@@ -865,12 +920,16 @@ private:
     std::string statusJSON() {
         TurboMacDriverStatus driverStatus = {};
         TurboMacCapabilities statusCapabilities = {};
+        TurboMacHWPStatus hwpStatus = {};
         std::string ignored;
         const bool driverStatusValid = driver_.status(&driverStatus, &ignored);
         const bool statusCapabilitiesValid = driver_.capabilities(
             &statusCapabilities,
             &ignored
         );
+        const bool hwpStatusValid = driver_.hwpStatus(&hwpStatus, &ignored)
+            && hwpStatus.version == TURBOMAC_PROTOCOL_VERSION
+            && hwpStatus.size == sizeof(hwpStatus);
         const PolicySnapshot snapshot = policy_.evaluate(monotonicSeconds());
         std::ostringstream output;
         output << std::fixed << std::setprecision(3)
@@ -914,6 +973,34 @@ private:
                << (statusCapabilitiesValid
                     && (statusCapabilities.flags & kTurboMacCapabilityLimitLocked) != 0U
                     ? "true" : "false")
+               << ",\"hwp_supported\":"
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusSupported) != 0U
+                    ? "true" : "false")
+               << ",\"hwp_enabled\":"
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusEnabled) != 0U
+                    ? "true" : "false")
+               << ",\"hwp_maximum_restricted\":"
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusMaximumRestricted) != 0U
+                    ? "true" : "false")
+               << ",\"hwp_override_active\":"
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusOverrideActive) != 0U
+                    ? "true" : "false")
+               << ",\"hwp_readback_valid\":"
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusReadbackValid) != 0U
+                    ? "true" : "false")
+               << ",\"hwp_status_flags\":"
+               << (hwpStatusValid ? hwpStatus.flags : 0U)
+               << ",\"hwp_logical_cpu_count\":"
+               << (hwpStatusValid ? hwpStatus.logical_cpu_count : 0U)
+               << ",\"hwp_capabilities_raw\":"
+               << (hwpStatusValid ? hwpStatus.hwp_capabilities_raw : 0U)
+               << ",\"hwp_package_request_raw\":"
+               << (hwpStatusValid ? hwpStatus.current_package_request_raw : 0U)
                << ",\"driver_capability_flags\":"
                << (statusCapabilitiesValid ? statusCapabilities.flags : 0U)
                << ",\"driver_state\":"
@@ -924,12 +1011,71 @@ private:
                << (driverStatusValid ? driverStatus.current_package_limit_raw : 0U)
                << ",\"current_power_control_raw\":"
                << (driverStatusValid ? driverStatus.current_power_control_raw : 0U)
-               << "}";
+               << ",\"hwp_cpus\":[";
+        bool firstHWPEntry = true;
+        if (hwpStatusValid) {
+            for (uint32_t index = 0U; index < TURBOMAC_MAX_LOGICAL_CPUS; ++index) {
+                const TurboMacHWPEntry &entry = hwpStatus.cpus[index];
+                if ((entry.flags & kTurboMacHWPEntryPresent) == 0U) {
+                    continue;
+                }
+                if (!firstHWPEntry) {
+                    output << ",";
+                }
+                firstHWPEntry = false;
+                const bool flexible =
+                    (hwpStatus.flags & kTurboMacHWPStatusFlexibleRequestFields) != 0U;
+                const uint32_t effectiveMaximum = tm_hwp_effective_maximum(
+                    entry.current_request_raw,
+                    hwpStatus.current_package_request_raw,
+                    flexible
+                );
+                output << "{\"cpu\":" << entry.cpu_index
+                       << ",\"flags\":" << entry.flags
+                       << ",\"captured_request_raw\":" << entry.captured_request_raw
+                       << ",\"current_request_raw\":" << entry.current_request_raw
+                       << ",\"minimum\":" << tm_hwp_minimum(entry.current_request_raw)
+                       << ",\"maximum\":" << tm_hwp_maximum(entry.current_request_raw)
+                       << ",\"desired\":" << tm_hwp_desired(entry.current_request_raw)
+                       << ",\"epp\":" << tm_hwp_epp(entry.current_request_raw)
+                       << ",\"package_control\":"
+                       << (tm_hwp_package_control(entry.current_request_raw)
+                           ? "true" : "false")
+                       << ",\"maximum_valid\":"
+                       << (tm_hwp_maximum_valid(entry.current_request_raw)
+                           ? "true" : "false")
+                       << ",\"effective_maximum\":" << effectiveMaximum
+                       << "}";
+            }
+        }
+        output << "]}";
         return output.str();
     }
 
     std::string statusHuman() {
         const PolicySnapshot snapshot = policy_.evaluate(monotonicSeconds());
+        TurboMacHWPStatus hwpStatus = {};
+        std::string ignored;
+        const bool hwpStatusValid = driver_.hwpStatus(&hwpStatus, &ignored)
+            && hwpStatus.version == TURBOMAC_PROTOCOL_VERSION
+            && hwpStatus.size == sizeof(hwpStatus);
+        uint32_t minimumEffectiveMaximum = UINT32_MAX;
+        uint32_t maximumEffectiveMaximum = 0U;
+        if (hwpStatusValid) {
+            for (uint32_t index = 0U; index < TURBOMAC_MAX_LOGICAL_CPUS; ++index) {
+                const TurboMacHWPEntry &entry = hwpStatus.cpus[index];
+                if ((entry.flags & kTurboMacHWPEntryPresent) == 0U) {
+                    continue;
+                }
+                const uint32_t effective = tm_hwp_effective_maximum(
+                    entry.current_request_raw,
+                    hwpStatus.current_package_request_raw,
+                    (hwpStatus.flags & kTurboMacHWPStatusFlexibleRequestFields) != 0U
+                );
+                minimumEffectiveMaximum = std::min(minimumEffectiveMaximum, effective);
+                maximumEffectiveMaximum = std::max(maximumEffectiveMaximum, effective);
+            }
+        }
         std::ostringstream output;
         output << std::fixed << std::setprecision(2)
                << "Governor: " << (armed_ ? "armed" : "passive") << "\n"
@@ -944,6 +1090,22 @@ private:
                << "Bands guard/shed/emergency: " << snapshot.guardW << " / "
                << snapshot.shedW << " / " << snapshot.emergencyW << " W\n"
                << "Requested PL1/PL2: " << snapshot.pl1W << " / " << snapshot.pl2W << " W\n"
+               << "HWP: "
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusEnabled) != 0U
+                    ? "enabled" : "unavailable")
+               << ", maximum "
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusMaximumRestricted) != 0U
+                    ? "restricted" : "released/unverified")
+               << ", override "
+               << (hwpStatusValid
+                    && (hwpStatus.flags & kTurboMacHWPStatusOverrideActive) != 0U
+                    ? "active" : "inactive")
+               << ", effective max "
+               << (minimumEffectiveMaximum == UINT32_MAX ? 0U : minimumEffectiveMaximum)
+               << ".." << maximumEffectiveMaximum
+               << "\n"
                << "CPU temperature (SMC / die): " << latestTemperatureC_ << " / "
                << latestCPUDieTemperatureC_ << " C\n"
                << "SMC failures: " << smcFailures_ << " consecutive\n";
@@ -1191,6 +1353,22 @@ private:
                     + " rapl_locked=" + (raplLocked ? "true" : "false") + "\n"
             );
             return;
+        }
+        TurboMacHWPStatus passiveHWP = {};
+        if (!passiveHWPReady(&passiveHWP, &error)) {
+            writeAll(client, "ERROR calibration precondition failed: " + error + "\n");
+            return;
+        }
+        {
+            std::ostringstream hwpDetail;
+            hwpDetail << "HWP maximum restriction confirmed across "
+                      << passiveHWP.logical_cpu_count << " logical CPUs; highest=0x"
+                      << std::hex
+                      << (passiveHWP.hwp_capabilities_raw & UINT64_C(0xff))
+                      << "\n";
+            if (!writeAll(client, hwpDetail.str())) {
+                return;
+            }
         }
         const double driverFloor = std::max(
             1.0, (double)current.minimum_power_mw / 1000.0

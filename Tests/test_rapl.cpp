@@ -52,6 +52,7 @@ int main() {
     request.pl1_mw = 20000U;
     request.pl2_mw = 25000U;
     request.watchdog_timeout_ms = 5000U;
+    request.hwp_mode = kTurboMacHWPReleaseMaximum;
     request.sequence = 11U;
     assert(tm_validate_limit_request(
         &request, 10U, 5000U, 45000U, 55000U, 5000U
@@ -72,6 +73,11 @@ int main() {
     ));
     request.pl2_mw = 25000U;
     request.watchdog_timeout_ms = 4999U;
+    assert(!tm_validate_limit_request(
+        &request, 10U, 5000U, 45000U, 55000U, 5000U
+    ));
+    request.watchdog_timeout_ms = 5000U;
+    request.hwp_mode = kTurboMacHWPModeInvalid;
     assert(!tm_validate_limit_request(
         &request, 10U, 5000U, 45000U, 55000U, 5000U
     ));

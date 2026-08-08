@@ -21,6 +21,7 @@ public:
     bool capabilities(TurboMacCapabilities *output, std::string *error) const;
     bool telemetry(TurboMacTelemetry *output, std::string *error) const;
     bool status(TurboMacDriverStatus *output, std::string *error) const;
+    bool hwpStatus(TurboMacHWPStatus *output, std::string *error) const;
     bool arm(uint32_t pl1MW, uint32_t pl2MW, std::string *error);
     bool update(uint32_t pl1MW, uint32_t pl2MW, std::string *error);
     bool disarm(std::string *error);

@@ -9,6 +9,7 @@
 #include <mach/kmod.h>
 #include <mach/mach_time.h>
 
+#include "../Shared/HWPCodec.h"
 #include "../Shared/RAPLCodec.h"
 #include "../Shared/DriverValidation.h"
 
@@ -16,6 +17,7 @@
 OSDefineMetaClassAndStructors(TurboMac, IOService);
 
 extern "C" void mp_rendezvous_no_intrs(void (*action)(void *), void *argument);
+extern "C" int cpu_number(void);
 
 namespace {
 
@@ -71,6 +73,22 @@ bool TurboMac::init(OSDictionary *dictionary) {
     capturedPackageLimit_ = 0U;
     capturedPowerControl_ = 0U;
     currentPowerControl_ = 0U;
+    expectedPackageLimit_ = 0U;
+    hwpCPUIDEAX_ = 0U;
+    hwpMode_ = kTurboMacHWPModeInvalid;
+    hwpPMEnableRaw_ = 0U;
+    hwpCapabilitiesRaw_ = 0U;
+    capturedHWPPackageRequest_ = 0U;
+    expectedHWPPackageRequest_ = 0U;
+    bzero(capturedHWPRequests_, sizeof(capturedHWPRequests_));
+    bzero(expectedHWPRequests_, sizeof(expectedHWPRequests_));
+    bzero(capturedHWPPresent_, sizeof(capturedHWPPresent_));
+    hwpSupported_ = false;
+    hwpEnabled_ = false;
+    hwpFlexibleRequestFields_ = false;
+    hwpPackageRequestSupported_ = false;
+    hwpCaptured_ = false;
+    hwpOverrideActive_ = false;
     lastSequence_ = 0U;
     lastHeartbeat_ = 0U;
 
@@ -216,6 +234,9 @@ IOReturn TurboMac::copyCapabilities(TurboMacCapabilities *output) {
     }
 
     IOLockLock(lock_);
+    if (state_ != kTurboMacDriverArmed && !hwpEnabled_) {
+        initializeHWPLocked();
+    }
     output->version = TURBOMAC_PROTOCOL_VERSION;
     output->size = sizeof(*output);
     output->cpu_family = cpuFamily_;
@@ -227,6 +248,12 @@ IOReturn TurboMac::copyCapabilities(TurboMacCapabilities *output) {
     }
     if (powerInfoRaw_ != 0U) {
         output->flags |= kTurboMacCapabilityPowerInfoValid;
+    }
+    if (hwpSupported_) {
+        output->flags |= kTurboMacCapabilityHWPSupported;
+    }
+    if (hwpEnabled_) {
+        output->flags |= kTurboMacCapabilityHWPEnabled;
     }
     const uint64_t packageLimit = supported_ ? rdmsr64(kMSRPackagePowerLimit) : 0U;
     bool allGuardEnabled = false;
@@ -251,6 +278,13 @@ IOReturn TurboMac::copyCapabilities(TurboMacCapabilities *output) {
     output->package_power_info_raw = powerInfoRaw_;
     output->current_package_limit_raw = packageLimit;
     output->current_power_control_raw = powerControl;
+    output->hwp_cpuid_eax = hwpCPUIDEAX_;
+    output->reserved0 = 0U;
+    output->hwp_pm_enable_raw = hwpPMEnableRaw_;
+    output->hwp_capabilities_raw = hwpCapabilitiesRaw_;
+    output->current_hwp_package_request_raw = hwpPackageRequestSupported_ && hwpEnabled_
+        ? rdmsr64(kMSRHWPPackageRequest)
+        : 0U;
     IOLockUnlock(lock_);
     return kIOReturnSuccess;
 }
@@ -306,8 +340,22 @@ IOReturn TurboMac::arm(const TurboMacLimitRequest *request) {
     if ((packageLimit & TM_RAPL_LOCK) != 0U
         || !powerControlReadable
         || !allGuardEnabled
+        || !hwpSupported_
+        || !hwpEnabled_
+        || !tm_hwp_capabilities_sane(hwpCapabilitiesRaw_)
         || (packageLimit & TM_RAPL_PL1_ENABLE) == 0U
         || (packageLimit & TM_RAPL_PL2_ENABLE) == 0U) {
+        restoreReason_ = kTurboMacRestoreInvalidRequest;
+        IOLockUnlock(lock_);
+        return kIOReturnNotPermitted;
+    }
+
+    if (!captureHWPStateLocked()
+        || !hwpMaximumRestrictedLocked(
+            capturedHWPRequests_, capturedHWPPresent_, capturedHWPPackageRequest_
+        )) {
+        hwpCaptured_ = false;
+        bzero(capturedHWPPresent_, sizeof(capturedHWPPresent_));
         restoreReason_ = kTurboMacRestoreInvalidRequest;
         IOLockUnlock(lock_);
         return kIOReturnNotPermitted;
@@ -319,13 +367,14 @@ IOReturn TurboMac::arm(const TurboMacLimitRequest *request) {
     ceilingPL2MW_ = tm_rapl_raw_to_mw(tm_rapl_pl2_raw(packageLimit), powerExponent_);
     captured_ = true;
 
-    if (!validateRequestLocked(request, true) || !installLimitsLocked(request->pl1_mw, request->pl2_mw)) {
+    if (!validateRequestLocked(request, true)
+        || !installLimitsLocked(request->pl1_mw, request->pl2_mw)) {
         restoreLocked(kTurboMacRestoreReadbackMismatch);
         IOLockUnlock(lock_);
         return kIOReturnError;
     }
 
-    if (!setPowerControlGuardLocked(false)) {
+    if (!applyHWPMaximumLocked() || !setPowerControlGuardLocked(false)) {
         restoreLocked(kTurboMacRestoreReadbackMismatch);
         IOLockUnlock(lock_);
         return kIOReturnError;
@@ -353,28 +402,10 @@ IOReturn TurboMac::update(const TurboMacLimitRequest *request) {
         return kIOReturnBadArgument;
     }
 
-    bool allGuardEnabled = false;
-    bool allGuardDisabled = false;
-    uint64_t currentControl = 0U;
-    const bool powerControlReadable = readPowerControlLocked(
-        &allGuardEnabled, &allGuardDisabled, &currentControl
-    );
-    const uint64_t currentLimit = rdmsr64(kMSRPackagePowerLimit);
-    if (!powerControlReadable
-        || !allGuardDisabled
-        || (currentLimit & TM_RAPL_LOCK) != 0U) {
+    if (!verifyArmedStateLocked()) {
         restoreLocked(kTurboMacRestoreReadbackMismatch);
         IOLockUnlock(lock_);
         return kIOReturnError;
-    }
-
-    const uint32_t currentPL1 = tm_rapl_raw_to_mw(tm_rapl_pl1_raw(currentLimit), powerExponent_);
-    const uint32_t currentPL2 = tm_rapl_raw_to_mw(tm_rapl_pl2_raw(currentLimit), powerExponent_);
-    if (currentPL1 < appliedPL1MW_) {
-        ceilingPL1MW_ = minimumNonZero(ceilingPL1MW_, currentPL1);
-    }
-    if (currentPL2 < appliedPL2MW_) {
-        ceilingPL2MW_ = minimumNonZero(ceilingPL2MW_, currentPL2);
     }
 
     if (!validateRequestLocked(request, false) || !installLimitsLocked(request->pl1_mw, request->pl2_mw)) {
@@ -438,6 +469,91 @@ IOReturn TurboMac::copyStatus(TurboMacDriverStatus *output) {
     return kIOReturnSuccess;
 }
 
+IOReturn TurboMac::copyHWPStatus(TurboMacHWPStatus *output) {
+    if (output == nullptr) {
+        return kIOReturnBadArgument;
+    }
+
+    IOLockLock(lock_);
+    if (state_ != kTurboMacDriverArmed && !hwpEnabled_) {
+        initializeHWPLocked();
+    }
+    output->version = TURBOMAC_PROTOCOL_VERSION;
+    output->size = sizeof(*output);
+    output->flags = 0U;
+    if (hwpSupported_) {
+        output->flags |= kTurboMacHWPStatusSupported;
+    }
+    if (hwpEnabled_) {
+        output->flags |= kTurboMacHWPStatusEnabled;
+    }
+    if (hwpFlexibleRequestFields_) {
+        output->flags |= kTurboMacHWPStatusFlexibleRequestFields;
+    }
+    if (hwpPackageRequestSupported_) {
+        output->flags |= kTurboMacHWPStatusPackageControlSupported;
+    }
+    if (hwpOverrideActive_) {
+        output->flags |= kTurboMacHWPStatusOverrideActive;
+    }
+    if (hwpCaptured_) {
+        output->flags |= kTurboMacHWPStatusCaptureValid;
+    }
+
+    output->hwp_cpuid_eax = hwpCPUIDEAX_;
+    output->hwp_mode = hwpMode_;
+    output->hwp_pm_enable_raw = hwpPMEnableRaw_;
+    output->hwp_capabilities_raw = hwpCapabilitiesRaw_;
+    output->captured_package_request_raw = hwpCaptured_
+        ? capturedHWPPackageRequest_
+        : 0U;
+    output->current_package_request_raw = hwpPackageRequestSupported_ && hwpEnabled_
+        ? rdmsr64(kMSRHWPPackageRequest)
+        : 0U;
+
+    uint64_t current[kMaximumLogicalCPUs] = {};
+    uint8_t present[kMaximumLogicalCPUs] = {};
+    uint32_t count = 0U;
+    const bool readbackValid = hwpEnabled_
+        && readHWPRequestsLocked(current, present, &count);
+    if (readbackValid) {
+        output->flags |= kTurboMacHWPStatusReadbackValid;
+        if (hwpMaximumRestrictedLocked(
+                current, present, output->current_package_request_raw
+            )) {
+            output->flags |= kTurboMacHWPStatusMaximumRestricted;
+        }
+    }
+    output->logical_cpu_count = readbackValid ? count : 0U;
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        TurboMacHWPEntry &entry = output->cpus[index];
+        entry.cpu_index = index;
+        entry.flags = 0U;
+        entry.captured_request_raw = hwpCaptured_ && capturedHWPPresent_[index] != 0U
+            ? capturedHWPRequests_[index]
+            : 0U;
+        entry.current_request_raw = readbackValid && present[index] != 0U
+            ? current[index]
+            : 0U;
+        if (readbackValid && present[index] != 0U) {
+            entry.flags |= kTurboMacHWPEntryPresent;
+            if (tm_hwp_package_control(current[index])) {
+                entry.flags |= kTurboMacHWPEntryPackageControl;
+            }
+            if (!tm_hwp_package_control(current[index])
+                || (hwpFlexibleRequestFields_ && tm_hwp_maximum_valid(current[index]))) {
+                entry.flags |= kTurboMacHWPEntryMaximumFromLocalRequest;
+            }
+        }
+        if (hwpOverrideActive_ && capturedHWPPresent_[index] != 0U
+            && expectedHWPRequests_[index] != capturedHWPRequests_[index]) {
+            entry.flags |= kTurboMacHWPEntryModified;
+        }
+    }
+    IOLockUnlock(lock_);
+    return kIOReturnSuccess;
+}
+
 void TurboMac::invalidClientCommand() {
     IOLockLock(lock_);
     restoreLocked(kTurboMacRestoreInvalidRequest);
@@ -462,10 +578,15 @@ void TurboMac::watchdogFired(OSObject *owner, IOTimerEventSource *sender) {
         const uint64_t now = driver->readAbsoluteTime();
         if (driver->watchdogExpiredLocked(now)) {
             driver->restoreLocked(kTurboMacRestoreWatchdog);
+        } else if (!driver->verifyArmedStateLocked()) {
+            driver->restoreLocked(kTurboMacRestoreReadbackMismatch);
         } else {
             sender->setTimeoutMS(kWatchdogPollMS);
         }
     } else if (driver->supported_) {
+        if (!driver->hwpEnabled_) {
+            driver->initializeHWPLocked();
+        }
         if (!driver->ensurePassiveGuardLocked()) {
             driver->state_ = kTurboMacDriverFailsafe;
             driver->restoreReason_ = kTurboMacRestoreReadbackMismatch;
@@ -510,6 +631,7 @@ bool TurboMac::initializeCapabilitiesLocked() {
         && energyExponent_ < 32U
         && thermalSpecMW_ > 0U
         && capabilityMaximumMW_ >= floorMW_;
+    initializeHWPLocked();
     if (supported_) {
         bool allEnabled = false;
         bool allDisabled = false;
@@ -579,6 +701,7 @@ bool TurboMac::installLimitsLocked(uint32_t pl1MW, uint32_t pl2MW) {
     if (!verifyLimitsLocked(requested)) {
         return false;
     }
+    expectedPackageLimit_ = requested;
     appliedPL1MW_ = tm_rapl_raw_to_mw(pl1Raw, powerExponent_);
     appliedPL2MW_ = tm_rapl_raw_to_mw(pl2Raw, powerExponent_);
     return true;
@@ -676,6 +799,305 @@ bool TurboMac::setPowerControlGuardLocked(bool enabled) {
     return true;
 }
 
+bool TurboMac::initializeHWPLocked() {
+    uint32_t maximumLeaf = 0U;
+    uint32_t ebx = 0U;
+    uint32_t ecx = 0U;
+    uint32_t edx = 0U;
+    __asm__ volatile("cpuid"
+                     : "+a"(maximumLeaf), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     :
+                     : "memory");
+    if (maximumLeaf < 6U) {
+        return false;
+    }
+
+    uint32_t eax = 6U;
+    ebx = 0U;
+    ecx = 0U;
+    edx = 0U;
+    __asm__ volatile("cpuid"
+                     : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     :
+                     : "memory");
+    hwpCPUIDEAX_ = eax;
+    hwpSupported_ = (eax & kHWPFeatureSupported) != 0U;
+    hwpPackageRequestSupported_ = (eax & kHWPFeaturePackageRequest) != 0U;
+    hwpFlexibleRequestFields_ = (eax & kHWPFeatureFlexibleRequestFields) != 0U;
+    if (!hwpSupported_) {
+        return false;
+    }
+
+    hwpPMEnableRaw_ = rdmsr64(kMSRHWPEnable);
+    hwpEnabled_ = (hwpPMEnableRaw_ & kHWPEnable) != 0U;
+    if (!hwpEnabled_) {
+        return false;
+    }
+
+    hwpCapabilitiesRaw_ = rdmsr64(kMSRHWPCapabilities);
+    if (!tm_hwp_capabilities_sane(hwpCapabilitiesRaw_)) {
+        IOLog("TurboMac: HWP capability bounds failed validation; governor will remain passive\n");
+        return false;
+    }
+
+    uint64_t requests[kMaximumLogicalCPUs] = {};
+    uint8_t present[kMaximumLogicalCPUs] = {};
+    uint32_t count = 0U;
+    if (!readHWPRequestsLocked(requests, present, &count)) {
+        IOLog("TurboMac: could not read every logical CPU HWP request; governor will remain passive\n");
+        return false;
+    }
+    logicalCPUCount_ = count;
+    return true;
+}
+
+void TurboMac::hwpRequestOnCPU(void *argument) {
+    HWPRequestBroadcast *broadcast = static_cast<HWPRequestBroadcast *>(argument);
+    const int cpu = cpu_number();
+    OSIncrementAtomic(&broadcast->count);
+    if (cpu < 0 || (uint32_t)cpu >= kMaximumLogicalCPUs
+        || broadcast->present[cpu] != 0U) {
+        OSIncrementAtomic(&broadcast->overflow);
+        return;
+    }
+
+    uint64_t value = rdmsr64(kMSRHWPRequest);
+    if (broadcast->operation == kHWPRequestWrite) {
+        if (broadcast->targetPresent[cpu] == 0U) {
+            OSIncrementAtomic(&broadcast->overflow);
+            return;
+        }
+        wrmsr64(kMSRHWPRequest, broadcast->targets[cpu]);
+        value = rdmsr64(kMSRHWPRequest);
+    }
+    broadcast->values[cpu] = value;
+    broadcast->present[cpu] = 1U;
+}
+
+bool TurboMac::readHWPRequestsLocked(
+    uint64_t values[kMaximumLogicalCPUs],
+    uint8_t present[kMaximumLogicalCPUs],
+    uint32_t *count
+) const {
+    if (!hwpSupported_ || !hwpEnabled_ || values == nullptr
+        || present == nullptr || count == nullptr) {
+        return false;
+    }
+    HWPRequestBroadcast broadcast = {};
+    broadcast.operation = kHWPRequestRead;
+    mp_rendezvous_no_intrs(hwpRequestOnCPU, &broadcast);
+    if (broadcast.overflow != 0 || broadcast.count <= 0
+        || (uint32_t)broadcast.count > kMaximumLogicalCPUs) {
+        return false;
+    }
+    uint32_t presentCount = 0U;
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        values[index] = broadcast.values[index];
+        present[index] = broadcast.present[index];
+        if (present[index] != 0U) {
+            presentCount++;
+        }
+    }
+    if (presentCount != (uint32_t)broadcast.count) {
+        return false;
+    }
+    *count = presentCount;
+    return true;
+}
+
+bool TurboMac::writeHWPRequestsLocked(
+    const uint64_t values[kMaximumLogicalCPUs],
+    const uint8_t present[kMaximumLogicalCPUs]
+) const {
+    if (!hwpSupported_ || !hwpEnabled_ || values == nullptr || present == nullptr) {
+        return false;
+    }
+    HWPRequestBroadcast broadcast = {};
+    broadcast.operation = kHWPRequestWrite;
+    uint32_t targetCount = 0U;
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        broadcast.targets[index] = values[index];
+        broadcast.targetPresent[index] = present[index];
+        if (present[index] != 0U) {
+            targetCount++;
+        }
+    }
+    mp_rendezvous_no_intrs(hwpRequestOnCPU, &broadcast);
+    if (broadcast.overflow != 0 || broadcast.count <= 0
+        || (uint32_t)broadcast.count != targetCount) {
+        return false;
+    }
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        if (present[index] != broadcast.present[index]) {
+            return false;
+        }
+        if (present[index] != 0U && broadcast.values[index] != values[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TurboMac::captureHWPStateLocked() {
+    hwpPMEnableRaw_ = hwpSupported_ ? rdmsr64(kMSRHWPEnable) : 0U;
+    hwpEnabled_ = (hwpPMEnableRaw_ & kHWPEnable) != 0U;
+    hwpCapabilitiesRaw_ = hwpEnabled_ ? rdmsr64(kMSRHWPCapabilities) : 0U;
+    if (!hwpSupported_ || !hwpEnabled_
+        || !tm_hwp_capabilities_sane(hwpCapabilitiesRaw_)) {
+        return false;
+    }
+    uint32_t count = 0U;
+    if (!readHWPRequestsLocked(
+            capturedHWPRequests_, capturedHWPPresent_, &count
+        )) {
+        return false;
+    }
+    capturedHWPPackageRequest_ = hwpPackageRequestSupported_
+        ? rdmsr64(kMSRHWPPackageRequest)
+        : 0U;
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        if (capturedHWPPresent_[index] != 0U
+            && tm_hwp_package_control(capturedHWPRequests_[index])
+            && !hwpPackageRequestSupported_) {
+            return false;
+        }
+        expectedHWPRequests_[index] = capturedHWPRequests_[index];
+    }
+    expectedHWPPackageRequest_ = capturedHWPPackageRequest_;
+    logicalCPUCount_ = count;
+    hwpCaptured_ = true;
+    hwpOverrideActive_ = false;
+    hwpMode_ = kTurboMacHWPModeInvalid;
+    return true;
+}
+
+bool TurboMac::hwpMaximumRestrictedLocked(
+    const uint64_t values[kMaximumLogicalCPUs],
+    const uint8_t present[kMaximumLogicalCPUs],
+    uint64_t packageRequest
+) const {
+    if (!hwpSupported_ || !hwpEnabled_ || values == nullptr || present == nullptr) {
+        return false;
+    }
+    const uint32_t highest = tm_hwp_highest(hwpCapabilitiesRaw_);
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        if (present[index] == 0U) {
+            continue;
+        }
+        const uint32_t effective = tm_hwp_effective_maximum(
+            values[index],
+            packageRequest,
+            hwpFlexibleRequestFields_
+        );
+        if (effective < highest) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TurboMac::applyHWPMaximumLocked() {
+    if (!hwpCaptured_ || hwpMode_ != kTurboMacHWPModeInvalid) {
+        return false;
+    }
+    const uint32_t highest = tm_hwp_highest(hwpCapabilitiesRaw_);
+    bool packageMaximumNeeded = false;
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        if (capturedHWPPresent_[index] == 0U) {
+            continue;
+        }
+        const uint64_t captured = capturedHWPRequests_[index];
+        if (tm_hwp_package_control(captured) && !hwpFlexibleRequestFields_) {
+            packageMaximumNeeded = true;
+            expectedHWPRequests_[index] = captured;
+        } else {
+            expectedHWPRequests_[index] = tm_hwp_with_local_maximum_override(
+                captured, highest, hwpFlexibleRequestFields_
+            );
+        }
+    }
+    expectedHWPPackageRequest_ = packageMaximumNeeded
+        ? tm_hwp_with_maximum(capturedHWPPackageRequest_, highest)
+        : capturedHWPPackageRequest_;
+
+    if (packageMaximumNeeded) {
+        wrmsr64(kMSRHWPPackageRequest, expectedHWPPackageRequest_);
+        if (rdmsr64(kMSRHWPPackageRequest) != expectedHWPPackageRequest_) {
+            return false;
+        }
+    }
+    if (!writeHWPRequestsLocked(expectedHWPRequests_, capturedHWPPresent_)) {
+        return false;
+    }
+    hwpMode_ = kTurboMacHWPReleaseMaximum;
+    hwpOverrideActive_ = true;
+    return verifyHWPOverrideLocked();
+}
+
+bool TurboMac::verifyHWPOverrideLocked() const {
+    if (!hwpCaptured_ || !hwpOverrideActive_
+        || hwpMode_ != kTurboMacHWPReleaseMaximum) {
+        return false;
+    }
+    if (hwpPackageRequestSupported_
+        && rdmsr64(kMSRHWPPackageRequest) != expectedHWPPackageRequest_) {
+        return false;
+    }
+    uint64_t current[kMaximumLogicalCPUs] = {};
+    uint8_t present[kMaximumLogicalCPUs] = {};
+    uint32_t count = 0U;
+    if (!readHWPRequestsLocked(current, present, &count)
+        || count != logicalCPUCount_) {
+        return false;
+    }
+    const uint32_t highest = tm_hwp_highest(hwpCapabilitiesRaw_);
+    for (uint32_t index = 0U; index < kMaximumLogicalCPUs; ++index) {
+        if (present[index] != capturedHWPPresent_[index]) {
+            return false;
+        }
+        if (present[index] != 0U
+            && (current[index] != expectedHWPRequests_[index]
+                || tm_hwp_effective_maximum(
+                       current[index],
+                       expectedHWPPackageRequest_,
+                       hwpFlexibleRequestFields_
+                   ) != highest)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TurboMac::restoreHWPLocked() {
+    if (!hwpCaptured_) {
+        return true;
+    }
+    bool packageRestored = true;
+    if (hwpPackageRequestSupported_) {
+        wrmsr64(kMSRHWPPackageRequest, capturedHWPPackageRequest_);
+        packageRestored = rdmsr64(kMSRHWPPackageRequest)
+            == capturedHWPPackageRequest_;
+    }
+    const bool requestsRestored = writeHWPRequestsLocked(
+        capturedHWPRequests_, capturedHWPPresent_
+    );
+    hwpOverrideActive_ = false;
+    hwpMode_ = kTurboMacHWPModeInvalid;
+    return packageRestored && requestsRestored;
+}
+
+bool TurboMac::verifyArmedStateLocked() {
+    bool allEnabled = false;
+    bool allDisabled = false;
+    uint64_t currentControl = 0U;
+    const bool guardValid = readPowerControlLocked(
+        &allEnabled, &allDisabled, &currentControl
+    ) && allDisabled;
+    return guardValid
+        && verifyLimitsLocked(expectedPackageLimit_)
+        && verifyHWPOverrideLocked();
+}
+
 bool TurboMac::restoreLocked(uint32_t reason) {
     if (watchdog_ != nullptr) {
         watchdog_->cancelTimeout();
@@ -691,6 +1113,7 @@ bool TurboMac::restoreLocked(uint32_t reason) {
     }
 
     const bool guardRestored = setPowerControlGuardLocked(true);
+    const bool hwpRestored = restoreHWPLocked();
 
     bool limitsRestored = false;
     const uint64_t currentLimit = rdmsr64(kMSRPackagePowerLimit);
@@ -700,15 +1123,19 @@ bool TurboMac::restoreLocked(uint32_t reason) {
     }
 
     captured_ = false;
+    hwpCaptured_ = false;
+    bzero(capturedHWPPresent_, sizeof(capturedHWPPresent_));
     appliedPL1MW_ = 0U;
     appliedPL2MW_ = 0U;
+    expectedPackageLimit_ = 0U;
     lastHeartbeat_ = 0U;
-    state_ = (guardRestored && limitsRestored && reason == kTurboMacRestoreRequested)
+    state_ = (guardRestored && hwpRestored && limitsRestored
+              && reason == kTurboMacRestoreRequested)
         ? kTurboMacDriverPassive
         : kTurboMacDriverFailsafe;
     restoreReason_ = reason;
     schedulePassiveGuardLocked();
-    return guardRestored && limitsRestored;
+    return guardRestored && hwpRestored && limitsRestored;
 }
 
 void TurboMac::scheduleWatchdogLocked() {
@@ -769,7 +1196,7 @@ extern "C" kmod_info_t kmod_info = {
     KMOD_INFO_VERSION,
     UINT32_MAX,
     "com.parham.turbomac.driver",
-    "2.0.0",
+    "2.1.0",
     -1,
     0,
     0,
