@@ -1445,7 +1445,7 @@ private:
         }
 
         const double baselineCapacity = policy_.snapshot().capacityW;
-        std::vector<std::pair<double, double>> mapping;
+        std::vector<TurboMacCalibrationPoint> mapping;
         double responsiveFloor = 0.0;
         double lastSafeLimit = 0.0;
         double worstError = 0.0;
@@ -1525,7 +1525,7 @@ private:
                 log_.write("calibration_plateau", plateau.str());
                 break;
             }
-            mapping.emplace_back(averagePackage, averageInput);
+            mapping.push_back({limit, averagePackage, averageInput});
             worstError = std::max(worstError, step.worstTransientError);
             lastSafeLimit = limit;
             if (responsiveFloor == 0.0) {
@@ -1560,41 +1560,57 @@ private:
             2.0, std::ceil((std::max(0.0, worstError) + 0.5) * 2.0) / 2.0
         );
         const PolicySnapshot latest = policy_.evaluate(monotonicSeconds());
-        double burstBase = latest.guardW - latest.nonCPUW - reserve;
-        burstBase = std::max(responsiveFloor, std::min(lastSafeLimit, burstBase));
+        const double burstBase = turboMacCalibrationBurstBase(
+            mapping, latest.guardW, reserve
+        );
         double selectedBurst = 0.0;
-        const double burstMaximum = std::min(10.0, capturedPL2 - burstBase);
-        for (double burst = 2.0; burst <= burstMaximum + 0.01; burst += 2.0) {
-            bool accepted = true;
-            for (unsigned run = 1U; run <= 3U; ++run) {
-                LoadStatistics burstRun;
-                const LoadResult result = runLoad(
-                    client,
-                    5U,
-                    burstBase,
-                    burstBase + burst,
-                    baselineCapacity,
-                    kSoftCalibrationInputW,
-                    &burstRun,
-                    &error
-                );
-                if (result != LoadResult::Complete) {
-                    accepted = false;
+        if (burstBase <= 0.0) {
+            writeAll(
+                client,
+                "no completed mapping point left reserve below guard; PL2 burst disabled\n"
+            );
+        } else {
+            writeAll(
+                client,
+                "testing PL2 from mapped cruise base "
+                    + std::to_string(burstBase) + " W\n"
+            );
+            const double burstMaximum = std::min(10.0, capturedPL2 - burstBase);
+            for (double burst = 2.0; burst <= burstMaximum + 0.01; burst += 2.0) {
+                bool accepted = true;
+                for (unsigned run = 1U; run <= 3U; ++run) {
+                    LoadStatistics burstRun;
+                    const LoadResult result = runLoad(
+                        client,
+                        5U,
+                        burstBase,
+                        burstBase + burst,
+                        baselineCapacity,
+                        kSoftCalibrationInputW,
+                        &burstRun,
+                        &error
+                    );
+                    if (result != LoadResult::Complete) {
+                        accepted = false;
+                        break;
+                    }
+                    worstError = std::max(worstError, burstRun.worstTransientError);
+                }
+                if (!accepted) {
+                    if (!error.empty()) {
+                        std::string ignored;
+                        disarmGovernor("PL2 calibration aborted", &ignored);
+                        writeAll(client, "ERROR " + error + "\n");
+                        return;
+                    }
                     break;
                 }
-                worstError = std::max(worstError, burstRun.worstTransientError);
+                selectedBurst = burst;
+                writeAll(
+                    client,
+                    "accepted PL2 burst allowance " + std::to_string(burst) + " W\n"
+                );
             }
-            if (!accepted) {
-                if (!error.empty()) {
-                    std::string ignored;
-                    disarmGovernor("PL2 calibration aborted", &ignored);
-                    writeAll(client, "ERROR " + error + "\n");
-                    return;
-                }
-                break;
-            }
-            selectedBurst = burst;
-            writeAll(client, "accepted PL2 burst allowance " + std::to_string(burst) + " W\n");
         }
 
         std::string ignored;
@@ -1604,17 +1620,18 @@ private:
         }
 
         double slope = 1.0;
-        double intercept = mapping.front().second - mapping.front().first;
+        double intercept = mapping.front().averageInputW
+            - mapping.front().averagePackageW;
         if (mapping.size() >= 2U) {
             double sumX = 0.0;
             double sumY = 0.0;
             double sumXY = 0.0;
             double sumXX = 0.0;
             for (const auto &point : mapping) {
-                sumX += point.first;
-                sumY += point.second;
-                sumXY += point.first * point.second;
-                sumXX += point.first * point.first;
+                sumX += point.averagePackageW;
+                sumY += point.averageInputW;
+                sumXY += point.averagePackageW * point.averageInputW;
+                sumXX += point.averagePackageW * point.averagePackageW;
             }
             const double count = (double)mapping.size();
             const double denominator = count * sumXX - sumX * sumX;
@@ -1635,7 +1652,9 @@ private:
         );
         profile.raplFloorW = responsiveFloor;
         profile.raplCeilingPL1W = lastSafeLimit;
-        profile.raplCeilingPL2W = std::min(capturedPL2, lastSafeLimit + selectedBurst);
+        profile.raplCeilingPL2W = turboMacCalibrationPL2Ceiling(
+            lastSafeLimit, burstBase, selectedBurst, capturedPL2
+        );
         profile.cruisePL2BurstW = selectedBurst;
         profile.packageToInputSlope = slope;
         profile.packageToInputInterceptW = intercept;

@@ -144,6 +144,9 @@ assert "turboMacCalibrationTierResponsive(limit, averagePackage)" in daemon
 assert "turboMacCalibrationBelowEffectiveFloor(" in daemon
 assert "calibration_floor_probe" in daemon
 assert "calibration_plateau" in daemon
+assert "turboMacCalibrationBurstBase(" in daemon
+assert "turboMacCalibrationPL2Ceiling(" in daemon
+assert "testing PL2 from mapped cruise base" in daemon
 assert "TurboMacCapabilities statusCapabilities" in daemon
 assert "driver_.capabilities(\n            &statusCapabilities" in daemon
 assert "std::fflush(stdout)" in cli

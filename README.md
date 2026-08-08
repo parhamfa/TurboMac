@@ -162,7 +162,10 @@ measured. It aborts on `PDTR >= 52 W`, CPU temperature `>= 95 C`, ACPW change
 over 5%, a read failure, or a limit mismatch; it discards a non-responsive RAPL
 tier after responsiveness has been established and conservatively stops a sweep
 at 50 W. Initial requests below the CPU package's observed loaded floor are
-recorded and skipped until the first responsive tier. Calibration finishes disarmed,
+recorded and skipped until the first responsive tier. PL2 testing selects its
+cruise base from the completed input/package map plus reserve; it never uses the
+temporarily inflated post-load non-CPU filter. Its absolute PL2 ceiling is also
+capped at the largest value actually tested from that base. Calibration finishes disarmed,
 which leaves HWP enabled under its conservative fail-safe until reboot. It also
 leaves auto-arm disabled. Only a successful protected, fixed Whisper workload
 enables auto-arm.
