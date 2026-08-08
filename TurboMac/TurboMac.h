@@ -47,6 +47,7 @@ private:
     static constexpr uint32_t kSupportedModel = 0x9eU;
     static constexpr uint32_t kWatchdogTimeoutMS = 5000U;
     static constexpr uint32_t kWatchdogPollMS = 250U;
+    static constexpr uint32_t kPassiveGuardPollMS = 1000U;
 
     static constexpr uint32_t kMSRPowerControl = 0x1fcU;
     static constexpr uint32_t kMSRRAPLPowerUnit = 0x606U;
@@ -84,9 +85,11 @@ private:
         bool *allDisabled,
         uint64_t *representative
     );
+    bool ensurePassiveGuardLocked();
     bool setPowerControlGuardLocked(bool enabled);
     bool restoreLocked(uint32_t reason);
     void scheduleWatchdogLocked();
+    void schedulePassiveGuardLocked();
     uint64_t readAbsoluteTime() const;
     bool watchdogExpiredLocked(uint64_t now) const;
     static void readCPUIdentity(uint32_t *family, uint32_t *model, uint32_t *stepping);

@@ -40,6 +40,17 @@ capability_initialization = driver.split(
 assert "if (supported_ && !allEnabled)" in capability_initialization
 assert "setPowerControlGuardLocked(true)" in capability_initialization
 
+watchdog = driver.split("void TurboMac::watchdogFired", 1)[1].split(
+    "bool TurboMac::initializeCapabilitiesLocked()", 1
+)[0]
+assert "ensurePassiveGuardLocked()" in watchdog
+assert "sender->setTimeoutMS(kPassiveGuardPollMS)" in watchdog
+
+disconnect = driver.split("void TurboMac::clientDisconnected()", 1)[1].split(
+    "void TurboMac::watchdogFired", 1
+)[0]
+assert "restoreLocked(kTurboMacRestoreClientClosed)" in disconnect
+
 assert "driver_->invalidClientCommand()" in client
 assert "driver_->clientDisconnected()" in client
 assert "super::externalMethod(" in client

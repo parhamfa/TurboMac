@@ -102,6 +102,9 @@ bool TurboMac::start(IOService *provider) {
 
     IOLockLock(lock_);
     const bool initialized = initializeCapabilitiesLocked();
+    if (initialized) {
+        schedulePassiveGuardLocked();
+    }
     IOLockUnlock(lock_);
     if (!initialized) {
         IOLog("TurboMac: unsupported CPU; service remains passive and cannot arm\n");
@@ -393,9 +396,7 @@ IOReturn TurboMac::disarm(const TurboMacCommandRequest *request) {
         || request->version != TURBOMAC_PROTOCOL_VERSION
         || request->size != sizeof(*request)
         || request->sequence <= lastSequence_) {
-        if (captured_) {
-            restoreLocked(kTurboMacRestoreInvalidRequest);
-        }
+        restoreLocked(kTurboMacRestoreInvalidRequest);
         IOLockUnlock(lock_);
         return kIOReturnBadArgument;
     }
@@ -439,19 +440,13 @@ IOReturn TurboMac::copyStatus(TurboMacDriverStatus *output) {
 
 void TurboMac::invalidClientCommand() {
     IOLockLock(lock_);
-    if (captured_) {
-        restoreLocked(kTurboMacRestoreInvalidRequest);
-    } else {
-        restoreReason_ = kTurboMacRestoreInvalidRequest;
-    }
+    restoreLocked(kTurboMacRestoreInvalidRequest);
     IOLockUnlock(lock_);
 }
 
 void TurboMac::clientDisconnected() {
     IOLockLock(lock_);
-    if (captured_) {
-        restoreLocked(kTurboMacRestoreClientClosed);
-    }
+    restoreLocked(kTurboMacRestoreClientClosed);
     releaseClientLocked();
     IOLockUnlock(lock_);
 }
@@ -470,6 +465,12 @@ void TurboMac::watchdogFired(OSObject *owner, IOTimerEventSource *sender) {
         } else {
             sender->setTimeoutMS(kWatchdogPollMS);
         }
+    } else if (driver->supported_) {
+        if (!driver->ensurePassiveGuardLocked()) {
+            driver->state_ = kTurboMacDriverFailsafe;
+            driver->restoreReason_ = kTurboMacRestoreReadbackMismatch;
+        }
+        sender->setTimeoutMS(kPassiveGuardPollMS);
     }
     IOLockUnlock(driver->lock_);
 }
@@ -642,6 +643,16 @@ bool TurboMac::readPowerControlLocked(
     return true;
 }
 
+bool TurboMac::ensurePassiveGuardLocked() {
+    bool allEnabled = false;
+    bool allDisabled = false;
+    uint64_t representative = 0U;
+    if (!readPowerControlLocked(&allEnabled, &allDisabled, &representative)) {
+        return false;
+    }
+    return allEnabled || setPowerControlGuardLocked(true);
+}
+
 bool TurboMac::setPowerControlGuardLocked(bool enabled) {
     PowerControlBroadcast broadcast = {};
     broadcast.operation = enabled
@@ -670,11 +681,13 @@ bool TurboMac::restoreLocked(uint32_t reason) {
         watchdog_->cancelTimeout();
     }
     if (!captured_) {
-        state_ = reason == kTurboMacRestoreRequested
+        const bool guardRestored = supported_ && ensurePassiveGuardLocked();
+        state_ = guardRestored && reason == kTurboMacRestoreRequested
             ? kTurboMacDriverPassive
             : kTurboMacDriverFailsafe;
         restoreReason_ = reason;
-        return true;
+        schedulePassiveGuardLocked();
+        return guardRestored;
     }
 
     const bool guardRestored = setPowerControlGuardLocked(true);
@@ -694,12 +707,19 @@ bool TurboMac::restoreLocked(uint32_t reason) {
         ? kTurboMacDriverPassive
         : kTurboMacDriverFailsafe;
     restoreReason_ = reason;
+    schedulePassiveGuardLocked();
     return guardRestored && limitsRestored;
 }
 
 void TurboMac::scheduleWatchdogLocked() {
     if (watchdog_ != nullptr) {
         watchdog_->setTimeoutMS(kWatchdogPollMS);
+    }
+}
+
+void TurboMac::schedulePassiveGuardLocked() {
+    if (watchdog_ != nullptr && supported_ && state_ != kTurboMacDriverArmed) {
+        watchdog_->setTimeoutMS(kPassiveGuardPollMS);
     }
 }
 
