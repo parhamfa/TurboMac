@@ -10,10 +10,12 @@ namespace {
 constexpr double kUnset = -1.0;
 constexpr double kInputWindowSeconds = 1.0;
 constexpr double kPackageWindowSeconds = 1.0;
+constexpr double kPackageAlignmentWindowSeconds = 2.0;
 constexpr double kCapacityWindowSeconds = 10.0;
 constexpr double kTelemetryFreshSeconds = 2.0;
 constexpr double kNonCPURiseTauSeconds = 0.25;
 constexpr double kNonCPUFallTauSeconds = 5.0;
+constexpr double kPackageAlignmentDeltaW = 5.0;
 constexpr double kLimitDeadbandW = 0.25;
 constexpr double kFastRecoveryIntervalSeconds = 1.0;
 constexpr double kModerateRecoveryIntervalSeconds = 2.0;
@@ -88,7 +90,8 @@ PolicySnapshot GovernorPolicy::evaluate(double nowSeconds) {
     expireSamples(nowSeconds);
     updateThresholds();
     snapshot_.filteredInputW = filteredInput();
-    snapshot_.filteredPackageW = filteredPackage();
+    snapshot_.filteredPackageW = filteredPackage(nowSeconds);
+    snapshot_.alignedPackageW = alignedPackage(nowSeconds);
     snapshot_.ready = !inputSamples_.empty()
         && !packageSamples_.empty()
         && !capacitySamples_.empty()
@@ -100,10 +103,10 @@ PolicySnapshot GovernorPolicy::evaluate(double nowSeconds) {
     }
 
     updateNonCPU(nowSeconds);
-    // The rail estimate combines quantities averaged over the same one-second
-    // window. The fast path deliberately does not reuse the slow non-CPU
-    // estimate: an instantaneous package sample plus a stale subtraction was
-    // the source of false emergency transitions during CPU load edges.
+    // The rail estimate combines current filtered package power with the
+    // edge-safe non-CPU estimate. The fast path deliberately does not reuse
+    // that slow estimate: an instantaneous package sample plus a stale
+    // subtraction was the source of false emergency transitions.
     const double railEstimate = snapshot_.filteredPackageW + snapshot_.nonCPUW;
     const double calibratedEstimate = config_.packageToInputSlope
         * snapshot_.packageW + config_.packageToInputInterceptW;
@@ -174,7 +177,7 @@ void GovernorPolicy::expireSamples(double now) {
         inputSamples_.pop_front();
     }
     while (!packageSamples_.empty()
-           && now - packageSamples_.front().time > kPackageWindowSeconds) {
+           && now - packageSamples_.front().time > kPackageAlignmentWindowSeconds) {
         packageSamples_.pop_front();
     }
     while (!capacitySamples_.empty()
@@ -197,10 +200,24 @@ void GovernorPolicy::updateNonCPU(double now) {
     if (lastSMCTime_ == lastNonCPUSMCTime_) {
         return;
     }
-    const double observation = std::max(
+    // SMC input telemetry can trail the package energy counter at CPU load
+    // edges. Normally retain the current median-package subtraction. When the
+    // recent causal package envelope differs substantially from current
+    // package power, block only an impossible upward attribution. Downward
+    // updates remain available so the estimate can recover after a real load.
+    // Direct measured input still owns the immediate emergency path.
+    const double rawObservation = std::max(
         0.0,
         snapshot_.filteredInputW - snapshot_.filteredPackageW
     );
+    double observation = rawObservation;
+    if (nonCPUInitialized_
+        && rawObservation > snapshot_.nonCPUW
+        && snapshot_.alignedPackageW - snapshot_.filteredPackageW
+            >= kPackageAlignmentDeltaW) {
+        observation = snapshot_.nonCPUW;
+    }
+    snapshot_.rawNonCPUObservationW = rawObservation;
     snapshot_.nonCPUObservationW = observation;
     if (!nonCPUInitialized_) {
         snapshot_.nonCPUW = observation;
@@ -323,15 +340,36 @@ double GovernorPolicy::filteredInput() const {
     return total / (double)inputSamples_.size();
 }
 
-double GovernorPolicy::filteredPackage() const {
+double GovernorPolicy::filteredPackage(double now) const {
     if (packageSamples_.empty()) {
         return 0.0;
     }
-    double total = 0.0;
+    std::vector<double> values;
+    values.reserve(packageSamples_.size());
     for (const TimedValue &sample : packageSamples_) {
-        total += sample.value;
+        if (now >= sample.time && now - sample.time <= kPackageWindowSeconds) {
+            values.push_back(sample.value);
+        }
     }
-    return total / (double)packageSamples_.size();
+    if (values.empty()) {
+        return 0.0;
+    }
+    std::sort(values.begin(), values.end());
+    const size_t middle = values.size() / 2U;
+    return values.size() % 2U == 0U
+        ? (values[middle - 1U] + values[middle]) / 2.0
+        : values[middle];
+}
+
+double GovernorPolicy::alignedPackage(double now) const {
+    double peak = snapshot_.filteredPackageW;
+    for (const TimedValue &sample : packageSamples_) {
+        if (now >= sample.time
+            && now - sample.time <= kPackageAlignmentWindowSeconds) {
+            peak = std::max(peak, sample.value);
+        }
+    }
+    return peak;
 }
 
 double GovernorPolicy::recoveryInterval() const {

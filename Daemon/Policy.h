@@ -29,7 +29,9 @@ struct PolicySnapshot {
     double predictedInputW = 0.0;
     double packageW = 0.0;
     double filteredPackageW = 0.0;
+    double alignedPackageW = 0.0;
     double nonCPUW = 0.0;
+    double rawNonCPUObservationW = 0.0;
     double nonCPUObservationW = 0.0;
     double guardW = 0.0;
     double shedW = 0.0;
@@ -74,7 +76,8 @@ private:
     void updateLimits(double now);
     bool sampleFresh(double now, double sampleTime, double maximumAge) const;
     double filteredInput() const;
-    double filteredPackage() const;
+    double filteredPackage(double now) const;
+    double alignedPackage(double now) const;
     double recoveryInterval() const;
     double targetForBand() const;
 

@@ -584,7 +584,9 @@ private:
                    << " filtered_input_w=" << snapshot.filteredInputW
                    << " package_w=" << snapshot.packageW
                    << " filtered_package_w=" << snapshot.filteredPackageW
+                   << " aligned_package_w=" << snapshot.alignedPackageW
                    << " non_cpu_w=" << snapshot.nonCPUW
+                   << " raw_non_cpu_observation_w=" << snapshot.rawNonCPUObservationW
                    << " non_cpu_observation_w=" << snapshot.nonCPUObservationW
                    << " predicted_input_w=" << snapshot.predictedInputW
                    << " capacity_w=" << snapshot.capacityW
@@ -974,7 +976,9 @@ private:
                << ",\"capacity_w\":" << snapshot.capacityW
                << ",\"package_w\":" << snapshot.packageW
                << ",\"filtered_package_w\":" << snapshot.filteredPackageW
+               << ",\"aligned_package_w\":" << snapshot.alignedPackageW
                << ",\"non_cpu_w\":" << snapshot.nonCPUW
+               << ",\"raw_non_cpu_observation_w\":" << snapshot.rawNonCPUObservationW
                << ",\"non_cpu_observation_w\":" << snapshot.nonCPUObservationW
                << ",\"filtered_input_w\":" << snapshot.filteredInputW
                << ",\"predicted_input_w\":" << snapshot.predictedInputW
@@ -1136,8 +1140,12 @@ private:
                << (profileValid_ && profile_.autoArm ? "enabled" : "disabled") << "\n"
                << "Band: " << GovernorPolicy::bandName(snapshot.band) << "\n"
                << "Input / capacity: " << snapshot.inputW << " / " << snapshot.capacityW << " W\n"
-               << "Package raw/filtered / non-CPU: " << snapshot.packageW << " / "
-               << snapshot.filteredPackageW << " / " << snapshot.nonCPUW << " W\n"
+               << "Package raw/filtered/aligned / non-CPU: " << snapshot.packageW << " / "
+               << snapshot.filteredPackageW << " / " << snapshot.alignedPackageW
+               << " / " << snapshot.nonCPUW << " W\n"
+               << "Non-CPU observation raw/effective: "
+               << snapshot.rawNonCPUObservationW << " / "
+               << snapshot.nonCPUObservationW << " W\n"
                << "Filtered/predicted input: " << snapshot.filteredInputW << " / "
                << snapshot.predictedInputW << " W\n"
                << "Bands guard/shed/emergency: " << snapshot.guardW << " / "

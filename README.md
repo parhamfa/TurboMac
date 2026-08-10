@@ -45,11 +45,15 @@ limits. They scale continuously from the median live AppleSMC `ACPW` value:
 | Emergency | 72.96% | 58.000 W |
 
 The daemon samples package energy at 10 Hz and AppleSMC `PDTR`/`ACPW` at 4 Hz.
-It estimates non-CPU input from input and package power averaged over matching
-one-second windows, with fast-rise/slow-fall filtering applied once per new SMC
-sample. The independent fast prediction path uses the calibrated package-to-
-input mapping without reusing the slow non-CPU estimate, so a CPU load edge
-cannot combine stale samples into fake non-CPU power.
+It estimates non-CPU input from filtered input minus the one-second median CPU
+package power, with fast-rise/slow-fall filtering applied once per new SMC
+sample. The median rejects short CPU spikes that would otherwise erode the idle
+baseline. Because SMC input telemetry can trail the package energy counter at a
+CPU load edge, a bounded two-second causal package envelope blocks only an
+impossible upward attribution while package power is collapsing; downward
+recovery remains available. Direct measured input still owns the immediate
+emergency path. The independent fast prediction path uses the calibrated
+package-to-input mapping without reusing the slow non-CPU estimate.
 
 PL1 is the active state's input target minus the non-CPU estimate and calibrated
 reserve. Decreases apply immediately. Recovery is headroom-aware: at least 10%

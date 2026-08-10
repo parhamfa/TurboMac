@@ -1,5 +1,6 @@
 #include "../Daemon/Policy.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -138,6 +139,91 @@ int main() {
     assert(skewed.nonCPUW < 15.0);
     assert(skewed.filteredPackageW < skewed.packageW);
 
+    PolicyConfig fallingConfig = config();
+    fallingConfig.raplFloorW = 9.0;
+    fallingConfig.raplCeilingPL1W = 37.0;
+    fallingConfig.raplCeilingPL2W = 37.0;
+    fallingConfig.cruisePL2BurstW = 10.0;
+    fallingConfig.packageToInputSlope = 1.205789;
+    fallingConfig.packageToInputInterceptW = 3.459693;
+    GovernorPolicy fallingEdge(fallingConfig);
+    double fallingTime = advance(fallingEdge, 0.0, 2.0, 14.0, 79.496, 7.0);
+    fallingTime = advance(fallingEdge, fallingTime, 3.2, 46.5, 79.496, 36.0);
+    assert(fallingEdge.snapshot().band == GovernorBand::Guard);
+    const double steadyOtherW = fallingEdge.snapshot().nonCPUW;
+    double maximumOtherW = steadyOtherW;
+    double minimumPL1W = fallingEdge.snapshot().pl1W;
+    bool sawAlignmentHold = false;
+    bool sawAttributionGate = false;
+
+    // Exact shape captured when the TUI load stopped: package power collapses
+    // first while delayed PDTR remains high for another second. This must not
+    // be interpreted as a new 30+ W non-CPU load or drive PL1 to its floor.
+    double nextSMC = fallingTime;
+    const double delayedInputEnd = fallingTime + 1.0;
+    for (double sampleTime = fallingTime;
+         sampleTime <= delayedInputEnd + 1e-9;
+         sampleTime += 0.1) {
+        assert(fallingEdge.updatePackagePower(sampleTime, 6.54));
+        if (sampleTime + 1e-9 >= nextSMC) {
+            assert(fallingEdge.updateSMC(sampleTime, 46.764, 79.496));
+            nextSMC += 0.25;
+        }
+        const PolicySnapshot edge = fallingEdge.evaluate(sampleTime);
+        sawAlignmentHold = sawAlignmentHold
+            || edge.alignedPackageW > edge.filteredPackageW + 20.0;
+        sawAttributionGate = sawAttributionGate
+            || edge.rawNonCPUObservationW > edge.nonCPUObservationW + 10.0;
+        assert(edge.band != GovernorBand::Emergency);
+        maximumOtherW = std::max(maximumOtherW, edge.nonCPUW);
+        minimumPL1W = std::min(minimumPL1W, edge.pl1W);
+    }
+    fallingTime = delayedInputEnd + 0.1;
+    nextSMC = fallingTime;
+    const double lowInputEnd = fallingTime + 1.5;
+    for (double sampleTime = fallingTime;
+         sampleTime <= lowInputEnd + 1e-9;
+         sampleTime += 0.1) {
+        assert(fallingEdge.updatePackagePower(sampleTime, 6.50));
+        if (sampleTime + 1e-9 >= nextSMC) {
+            assert(fallingEdge.updateSMC(sampleTime, 13.5, 79.496));
+            nextSMC += 0.25;
+        }
+        const PolicySnapshot edge = fallingEdge.evaluate(sampleTime);
+        sawAlignmentHold = sawAlignmentHold
+            || edge.alignedPackageW > edge.filteredPackageW + 20.0;
+        sawAttributionGate = sawAttributionGate
+            || edge.rawNonCPUObservationW > edge.nonCPUObservationW + 10.0;
+        assert(edge.band != GovernorBand::Emergency);
+        maximumOtherW = std::max(maximumOtherW, edge.nonCPUW);
+        minimumPL1W = std::min(minimumPL1W, edge.pl1W);
+    }
+    assert(sawAlignmentHold);
+    assert(sawAttributionGate);
+    assert(maximumOtherW < steadyOtherW + 5.0);
+    assert(minimumPL1W > 20.0);
+
+    GovernorPolicy idleSpikes(fallingConfig);
+    double idleTime = advance(idleSpikes, 0.0, 4.0, 14.0, 79.496, 7.0);
+    for (unsigned cycle = 0U; cycle < 20U; ++cycle) {
+        idleTime = advance(idleSpikes, idleTime, 0.1, 14.0, 79.496, 25.0);
+        idleTime = advance(idleSpikes, idleTime, 0.9, 14.0, 79.496, 7.0);
+    }
+    // Short, ordinary CPU bursts must not make the long-lived non-CPU
+    // baseline disappear merely because their peaks remain in the alignment
+    // history.
+    assert(idleSpikes.snapshot().filteredPackageW < 10.0);
+    assert(idleSpikes.snapshot().nonCPUW > 5.0);
+
+    // Alignment may delay attribution between rails, but direct measured
+    // input must retain the immediate emergency path.
+    fallingTime = lowInputEnd + 0.1;
+    assert(fallingEdge.updatePackagePower(fallingTime, 6.5));
+    assert(fallingEdge.updateSMC(fallingTime, 58.1, 79.496));
+    const PolicySnapshot measuredEmergency = fallingEdge.evaluate(fallingTime);
+    assert(measuredEmergency.band == GovernorBand::Emergency);
+    expectClose(measuredEmergency.pl1W, 9.0);
+
     GovernorPolicy recovery(config());
     advance(recovery, 0.0, 2.0, 20.0, 79.496, 10.0);
     expectClose(recovery.snapshot().recoveryIntervalS, 1.0);
@@ -145,6 +231,6 @@ int main() {
     advance(nearGuard, 0.0, 2.0, 44.0, 79.496, 34.0);
     expectClose(nearGuard.snapshot().recoveryIntervalS, 5.0);
 
-    std::cout << "policy scaling, coherent rails, 45/52/58 tiers, hysteresis, and adaptive recovery tests passed\n";
+    std::cout << "policy scaling, causal rail alignment, 45/52/58 tiers, hysteresis, and adaptive recovery tests passed\n";
     return 0;
 }

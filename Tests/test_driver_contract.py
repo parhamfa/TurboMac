@@ -195,6 +195,8 @@ assert "testing PL2 from mapped cruise base" in daemon
 assert "TurboMacCapabilities statusCapabilities" in daemon
 assert "driver_.capabilities(\n            &statusCapabilities" in daemon
 assert '" filtered_package_w=" << snapshot.filteredPackageW' in daemon
+assert '" aligned_package_w=" << snapshot.alignedPackageW' in daemon
+assert '" raw_non_cpu_observation_w=" << snapshot.rawNonCPUObservationW' in daemon
 assert '" recovery_interval_s=" << snapshot.recoveryIntervalS' in daemon
 assert "kCalibrationStatisticsWarmupSeconds" in daemon
 assert "std::fflush(stdout)" in cli
