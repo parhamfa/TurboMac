@@ -49,6 +49,7 @@ constexpr double kAutoArmTelemetrySeconds = 10.0;
 constexpr double kHardCalibrationInputW = 52.0;
 constexpr double kSoftCalibrationInputW = 50.0;
 constexpr double kMaximumCPUTemperatureC = 95.0;
+constexpr double kCalibrationStatisticsWarmupSeconds = 2.0;
 
 volatile sig_atomic_t stopRequested = 0;
 
@@ -580,11 +581,17 @@ private:
             detail << std::fixed << std::setprecision(3)
                    << "band=" << GovernorPolicy::bandName(snapshot.band)
                    << " input_w=" << snapshot.inputW
+                   << " filtered_input_w=" << snapshot.filteredInputW
                    << " package_w=" << snapshot.packageW
+                   << " filtered_package_w=" << snapshot.filteredPackageW
                    << " non_cpu_w=" << snapshot.nonCPUW
+                   << " non_cpu_observation_w=" << snapshot.nonCPUObservationW
+                   << " predicted_input_w=" << snapshot.predictedInputW
                    << " capacity_w=" << snapshot.capacityW
+                   << " desired_pl1_w=" << snapshot.desiredPL1W
                    << " pl1_w=" << snapshot.pl1W
-                   << " pl2_w=" << snapshot.pl2W;
+                   << " pl2_w=" << snapshot.pl2W
+                   << " recovery_interval_s=" << snapshot.recoveryIntervalS;
             if (snapshot.nonCPUOverBudget) {
                 detail << " non_cpu_over_budget=true";
             }
@@ -966,12 +973,18 @@ private:
                << ",\"input_w\":" << snapshot.inputW
                << ",\"capacity_w\":" << snapshot.capacityW
                << ",\"package_w\":" << snapshot.packageW
+               << ",\"filtered_package_w\":" << snapshot.filteredPackageW
                << ",\"non_cpu_w\":" << snapshot.nonCPUW
+               << ",\"non_cpu_observation_w\":" << snapshot.nonCPUObservationW
+               << ",\"filtered_input_w\":" << snapshot.filteredInputW
+               << ",\"predicted_input_w\":" << snapshot.predictedInputW
                << ",\"guard_w\":" << snapshot.guardW
                << ",\"shed_w\":" << snapshot.shedW
                << ",\"emergency_w\":" << snapshot.emergencyW
+               << ",\"desired_pl1_w\":" << snapshot.desiredPL1W
                << ",\"pl1_w\":" << snapshot.pl1W
                << ",\"pl2_w\":" << snapshot.pl2W
+               << ",\"recovery_interval_s\":" << snapshot.recoveryIntervalS
                << ",\"cpu_temp_c\":";
         if (std::isfinite(latestTemperatureC_)) {
             output << latestTemperatureC_;
@@ -1123,10 +1136,15 @@ private:
                << (profileValid_ && profile_.autoArm ? "enabled" : "disabled") << "\n"
                << "Band: " << GovernorPolicy::bandName(snapshot.band) << "\n"
                << "Input / capacity: " << snapshot.inputW << " / " << snapshot.capacityW << " W\n"
-               << "Package / non-CPU: " << snapshot.packageW << " / " << snapshot.nonCPUW << " W\n"
+               << "Package raw/filtered / non-CPU: " << snapshot.packageW << " / "
+               << snapshot.filteredPackageW << " / " << snapshot.nonCPUW << " W\n"
+               << "Filtered/predicted input: " << snapshot.filteredInputW << " / "
+               << snapshot.predictedInputW << " W\n"
                << "Bands guard/shed/emergency: " << snapshot.guardW << " / "
                << snapshot.shedW << " / " << snapshot.emergencyW << " W\n"
-               << "Requested PL1/PL2: " << snapshot.pl1W << " / " << snapshot.pl2W << " W\n"
+               << "Desired/requested PL1 / PL2: " << snapshot.desiredPL1W << " / "
+               << snapshot.pl1W << " / " << snapshot.pl2W << " W\n"
+               << "PL1 recovery interval: " << snapshot.recoveryIntervalS << " s\n"
                << "HWP: "
                << (hwpStatusValid
                     && (hwpStatus.flags & kTurboMacHWPStatusEnabled) != 0U
@@ -1309,16 +1327,17 @@ private:
                 return LoadResult::SoftCeiling;
             }
 
-            if (smcSampleSerial_ != priorSMCSample) {
+            if (smcSampleSerial_ != priorSMCSample
+                && now - started >= kCalibrationStatisticsWarmupSeconds) {
                 statistics->inputTotal += latestInputW_;
-                statistics->packageTotal += snapshot.packageW;
+                statistics->packageTotal += snapshot.filteredPackageW;
                 statistics->peakInput = std::max(statistics->peakInput, latestInputW_);
                 statistics->peakTemperature = std::max(
                     statistics->peakTemperature, latestCPUDieTemperatureC_
                 );
                 statistics->worstTransientError = std::max(
                     statistics->worstTransientError,
-                    latestInputW_ - snapshot.packageW - snapshot.nonCPUW
+                    latestInputW_ - snapshot.filteredPackageW - snapshot.nonCPUW
                 );
                 statistics->samples++;
                 priorSMCSample = smcSampleSerial_;

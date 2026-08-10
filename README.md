@@ -45,12 +45,19 @@ limits. They scale continuously from the median live AppleSMC `ACPW` value:
 | Emergency | 72.96% | 58.000 W |
 
 The daemon samples package energy at 10 Hz and AppleSMC `PDTR`/`ACPW` at 4 Hz.
-It estimates non-CPU input as `PDTR - package power` with fast-rise/slow-fall
-filtering. PL1 is the active state's input target minus that estimate and the
-calibrated reserve. Decreases apply immediately; PL1 increases by at most 1 W
-per five seconds. PL2 is equal to PL1 outside cruise, where a separately tested
-burst allowance may apply. Emergency prediction also takes the more conservative
-of the live rail estimate and the calibrated package-to-input mapping.
+It estimates non-CPU input from input and package power averaged over matching
+one-second windows, with fast-rise/slow-fall filtering applied once per new SMC
+sample. The independent fast prediction path uses the calibrated package-to-
+input mapping without reusing the slow non-CPU estimate, so a CPU load edge
+cannot combine stale samples into fake non-CPU power.
+
+PL1 is the active state's input target minus the non-CPU estimate and calibrated
+reserve. Decreases apply immediately. Recovery is headroom-aware: at least 10%
+ACPW below guard permits 1 W/s, 5-10% permits one watt every two seconds, and
+near guard retains the conservative 1 W/5 s rate. PL2 is equal to PL1 outside
+cruise, where a separately tested burst allowance may apply. Emergency
+prediction takes the more conservative of the coherent live-rail estimate and
+the independent calibrated package-to-input mapping.
 
 Transitions use the hysteresis defined in `Daemon/Policy.cpp`: guard requires
 two seconds, shed one second, and emergency is immediate from measured or

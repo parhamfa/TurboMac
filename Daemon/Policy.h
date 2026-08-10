@@ -28,13 +28,17 @@ struct PolicySnapshot {
     double filteredInputW = 0.0;
     double predictedInputW = 0.0;
     double packageW = 0.0;
+    double filteredPackageW = 0.0;
     double nonCPUW = 0.0;
+    double nonCPUObservationW = 0.0;
     double guardW = 0.0;
     double shedW = 0.0;
     double emergencyW = 0.0;
     double stateTargetW = 0.0;
+    double desiredPL1W = 0.0;
     double pl1W = 0.0;
     double pl2W = 0.0;
+    double recoveryIntervalS = 5.0;
     bool nonCPUOverBudget = false;
     bool ready = false;
 };
@@ -70,15 +74,19 @@ private:
     void updateLimits(double now);
     bool sampleFresh(double now, double sampleTime, double maximumAge) const;
     double filteredInput() const;
+    double filteredPackage() const;
+    double recoveryInterval() const;
     double targetForBand() const;
 
     PolicyConfig config_;
     PolicySnapshot snapshot_;
     std::deque<TimedValue> inputSamples_;
+    std::deque<TimedValue> packageSamples_;
     std::deque<TimedValue> capacitySamples_;
     double lastSMCTime_;
     double lastPackageTime_;
     double lastNonCPUTime_;
+    double lastNonCPUSMCTime_;
     double guardHighSince_;
     double shedHighSince_;
     double belowShedSince_;

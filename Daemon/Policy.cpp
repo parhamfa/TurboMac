@@ -9,10 +9,15 @@ namespace {
 
 constexpr double kUnset = -1.0;
 constexpr double kInputWindowSeconds = 1.0;
+constexpr double kPackageWindowSeconds = 1.0;
 constexpr double kCapacityWindowSeconds = 10.0;
 constexpr double kTelemetryFreshSeconds = 2.0;
 constexpr double kNonCPURiseTauSeconds = 0.25;
 constexpr double kNonCPUFallTauSeconds = 5.0;
+constexpr double kLimitDeadbandW = 0.25;
+constexpr double kFastRecoveryIntervalSeconds = 1.0;
+constexpr double kModerateRecoveryIntervalSeconds = 2.0;
+constexpr double kConservativeRecoveryIntervalSeconds = 5.0;
 
 double clampValue(double value, double low, double high) {
     return std::max(low, std::min(value, high));
@@ -28,10 +33,12 @@ void GovernorPolicy::reset(const PolicyConfig &config) {
     config_ = config;
     snapshot_ = {};
     inputSamples_.clear();
+    packageSamples_.clear();
     capacitySamples_.clear();
     lastSMCTime_ = kUnset;
     lastPackageTime_ = kUnset;
     lastNonCPUTime_ = kUnset;
+    lastNonCPUSMCTime_ = kUnset;
     guardHighSince_ = kUnset;
     shedHighSince_ = kUnset;
     belowShedSince_ = kUnset;
@@ -69,6 +76,7 @@ bool GovernorPolicy::updatePackagePower(double nowSeconds, double packageW) {
     }
     lastPackageTime_ = nowSeconds;
     snapshot_.packageW = packageW;
+    packageSamples_.push_back({nowSeconds, packageW});
     return true;
 }
 
@@ -80,7 +88,9 @@ PolicySnapshot GovernorPolicy::evaluate(double nowSeconds) {
     expireSamples(nowSeconds);
     updateThresholds();
     snapshot_.filteredInputW = filteredInput();
+    snapshot_.filteredPackageW = filteredPackage();
     snapshot_.ready = !inputSamples_.empty()
+        && !packageSamples_.empty()
         && !capacitySamples_.empty()
         && sampleFresh(nowSeconds, lastSMCTime_, kTelemetryFreshSeconds)
         && sampleFresh(nowSeconds, lastPackageTime_, kTelemetryFreshSeconds)
@@ -90,7 +100,11 @@ PolicySnapshot GovernorPolicy::evaluate(double nowSeconds) {
     }
 
     updateNonCPU(nowSeconds);
-    const double railEstimate = snapshot_.packageW + snapshot_.nonCPUW;
+    // The rail estimate combines quantities averaged over the same one-second
+    // window. The fast path deliberately does not reuse the slow non-CPU
+    // estimate: an instantaneous package sample plus a stale subtraction was
+    // the source of false emergency transitions during CPU load edges.
+    const double railEstimate = snapshot_.filteredPackageW + snapshot_.nonCPUW;
     const double calibratedEstimate = config_.packageToInputSlope
         * snapshot_.packageW + config_.packageToInputInterceptW;
     snapshot_.predictedInputW = std::max(railEstimate, calibratedEstimate)
@@ -159,6 +173,10 @@ void GovernorPolicy::expireSamples(double now) {
            && now - inputSamples_.front().time > kInputWindowSeconds) {
         inputSamples_.pop_front();
     }
+    while (!packageSamples_.empty()
+           && now - packageSamples_.front().time > kPackageWindowSeconds) {
+        packageSamples_.pop_front();
+    }
     while (!capacitySamples_.empty()
            && now - capacitySamples_.front().time > kCapacityWindowSeconds) {
         capacitySamples_.pop_front();
@@ -173,11 +191,22 @@ void GovernorPolicy::updateThresholds() {
 }
 
 void GovernorPolicy::updateNonCPU(double now) {
-    const double observation = std::max(0.0, snapshot_.inputW - snapshot_.packageW);
+    // Update exactly once per SMC sample. evaluate() runs much faster than SMC;
+    // repeatedly filtering the same phase-skewed pair artificially amplified
+    // a single mismatch into tens of watts of supposed non-CPU consumption.
+    if (lastSMCTime_ == lastNonCPUSMCTime_) {
+        return;
+    }
+    const double observation = std::max(
+        0.0,
+        snapshot_.filteredInputW - snapshot_.filteredPackageW
+    );
+    snapshot_.nonCPUObservationW = observation;
     if (!nonCPUInitialized_) {
         snapshot_.nonCPUW = observation;
         nonCPUInitialized_ = true;
         lastNonCPUTime_ = now;
+        lastNonCPUSMCTime_ = lastSMCTime_;
         return;
     }
     const double elapsed = clampValue(now - lastNonCPUTime_, 0.0, 2.0);
@@ -188,6 +217,7 @@ void GovernorPolicy::updateNonCPU(double now) {
     snapshot_.nonCPUW += alpha * (observation - snapshot_.nonCPUW);
     snapshot_.nonCPUW = std::max(0.0, snapshot_.nonCPUW);
     lastNonCPUTime_ = now;
+    lastNonCPUSMCTime_ = lastSMCTime_;
 }
 
 void GovernorPolicy::updateBand(double now) {
@@ -247,15 +277,19 @@ void GovernorPolicy::updateLimits(double now) {
     snapshot_.stateTargetW = targetForBand();
     double desiredPL1 = snapshot_.stateTargetW - snapshot_.nonCPUW - config_.reserveW;
     desiredPL1 = clampValue(desiredPL1, config_.raplFloorW, config_.raplCeilingPL1W);
+    snapshot_.desiredPL1W = desiredPL1;
+    snapshot_.recoveryIntervalS = recoveryInterval();
 
     if (!limitInitialized_) {
         snapshot_.pl1W = desiredPL1;
         limitInitialized_ = true;
         lastIncreaseTime_ = now;
-    } else if (desiredPL1 < snapshot_.pl1W) {
+    } else if (desiredPL1 < snapshot_.pl1W - kLimitDeadbandW) {
         snapshot_.pl1W = desiredPL1;
-    } else if (desiredPL1 > snapshot_.pl1W
-               && elapsedOrZero(now, lastIncreaseTime_) >= 5.0) {
+        lastIncreaseTime_ = now;
+    } else if (desiredPL1 > snapshot_.pl1W + kLimitDeadbandW
+               && elapsedOrZero(now, lastIncreaseTime_)
+                    >= snapshot_.recoveryIntervalS) {
         snapshot_.pl1W = std::min(desiredPL1, snapshot_.pl1W + 1.0);
         lastIncreaseTime_ = now;
     }
@@ -287,6 +321,32 @@ double GovernorPolicy::filteredInput() const {
         total += sample.value;
     }
     return total / (double)inputSamples_.size();
+}
+
+double GovernorPolicy::filteredPackage() const {
+    if (packageSamples_.empty()) {
+        return 0.0;
+    }
+    double total = 0.0;
+    for (const TimedValue &sample : packageSamples_) {
+        total += sample.value;
+    }
+    return total / (double)packageSamples_.size();
+}
+
+double GovernorPolicy::recoveryInterval() const {
+    if (snapshot_.capacityW <= 0.0) {
+        return kConservativeRecoveryIntervalSeconds;
+    }
+    const double riskInput = std::max(snapshot_.inputW, snapshot_.predictedInputW);
+    const double headroom = snapshot_.guardW - riskInput;
+    if (headroom >= 0.10 * snapshot_.capacityW) {
+        return kFastRecoveryIntervalSeconds;
+    }
+    if (headroom >= 0.05 * snapshot_.capacityW) {
+        return kModerateRecoveryIntervalSeconds;
+    }
+    return kConservativeRecoveryIntervalSeconds;
 }
 
 double GovernorPolicy::targetForBand() const {
