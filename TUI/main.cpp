@@ -108,12 +108,21 @@ std::string lamp(const std::string &label, bool lit, const char *litColor = kBgG
 class TerminalSession {
 public:
     TerminalSession() {
-        if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+        inputFD_ = open("/dev/tty", O_RDONLY | O_NOCTTY);
+        if (inputFD_ >= 0) {
+            ownsInputFD_ = true;
+            fcntl(inputFD_, F_SETFD, FD_CLOEXEC);
+        } else {
+            inputFD_ = STDIN_FILENO;
+        }
+        if (!isatty(inputFD_) || !isatty(STDOUT_FILENO)) {
             error_ = "turbomactop requires an interactive terminal";
+            closeOwnedInput();
             return;
         }
-        if (tcgetattr(STDIN_FILENO, &original_) != 0) {
+        if (tcgetattr(inputFD_, &original_) != 0) {
             error_ = "could not read terminal settings";
+            closeOwnedInput();
             return;
         }
         termios raw = original_;
@@ -121,13 +130,14 @@ public:
         raw.c_iflag &= static_cast<tcflag_t>(~(IXON | ICRNL));
         raw.c_cc[VMIN] = 0;
         raw.c_cc[VTIME] = 0;
-        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) {
+        if (tcsetattr(inputFD_, TCSAFLUSH, &raw) != 0) {
             error_ = "could not enter terminal raw mode";
+            closeOwnedInput();
             return;
         }
-        originalFlags_ = fcntl(STDIN_FILENO, F_GETFL, 0);
+        originalFlags_ = fcntl(inputFD_, F_GETFL, 0);
         if (originalFlags_ >= 0) {
-            fcntl(STDIN_FILENO, F_SETFL, originalFlags_ | O_NONBLOCK);
+            fcntl(inputFD_, F_SETFL, originalFlags_ | O_NONBLOCK);
         }
         active_ = true;
         std::cout << "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H" << std::flush;
@@ -137,10 +147,11 @@ public:
         if (!active_) {
             return;
         }
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_);
+        tcsetattr(inputFD_, TCSAFLUSH, &original_);
         if (originalFlags_ >= 0) {
-            fcntl(STDIN_FILENO, F_SETFL, originalFlags_);
+            fcntl(inputFD_, F_SETFL, originalFlags_);
         }
+        closeOwnedInput();
         std::cout << kReset << "\x1b[?25h\x1b[?1049l" << std::flush;
     }
 
@@ -150,6 +161,10 @@ public:
 
     const std::string &error() const {
         return error_;
+    }
+
+    int inputFD() const {
+        return inputFD_;
     }
 
     std::pair<unsigned, unsigned> size() const {
@@ -164,8 +179,18 @@ public:
     }
 
 private:
+    void closeOwnedInput() {
+        if (ownsInputFD_ && inputFD_ >= 0) {
+            close(inputFD_);
+            inputFD_ = -1;
+            ownsInputFD_ = false;
+        }
+    }
+
     termios original_ = {};
+    int inputFD_ = -1;
     int originalFlags_ = -1;
+    bool ownsInputFD_ = false;
     bool active_ = false;
     std::string error_;
 };
@@ -295,7 +320,7 @@ public:
 private:
     void run() {
         constexpr const char *command =
-            "/usr/bin/powermetrics -n 1 -i 250 -b 1 --samplers cpu_power 2>/dev/null";
+            "/usr/bin/powermetrics -n 1 -i 250 -b 1 --samplers cpu_power </dev/null 2>/dev/null";
         while (!stopping_.load(std::memory_order_relaxed)) {
             FILE *stream = popen(command, "r");
             if (stream != nullptr) {
@@ -473,6 +498,8 @@ void render(
     const std::deque<std::string> &events,
     const std::string &lastError,
     const turbomactop::WarningState &warnings,
+    uint64_t receivedControls,
+    const std::string &lastControl,
     double now
 ) {
     std::ostringstream output;
@@ -558,7 +585,10 @@ void render(
     output << kRed << kBold
            << "NO AUTOMATIC CUTOFF — WARNINGS DO NOT REDUCE OR STOP THE LOAD"
            << kReset << "\n";
-    output << "CONTROLS  ↑/↓ duty 5%   ←/→ workers   SPACE start/stop   M max preset   0 idle   R reset peaks   Q quit\n";
+    output << "CONTROLS  ↑/↓ or W/S duty   ←/→ or A/D workers   SPACE/ENTER toggle   M max   0/X idle   Q quit\n";
+    output << "KEYBOARD  RX " << receivedControls << "   LAST "
+           << (receivedControls == 0U ? kAmber : kGreen) << kBold
+           << lastControl << kReset << "\n";
 
     output << kGray << std::string(std::min<unsigned>(columns, 118U), '-') << kReset << "\n";
     output << kCyan << kBold << "ANNUNCIATOR PANEL" << kReset << "   ";
@@ -651,54 +681,67 @@ int main(int argc, char **argv) {
     turbomactop::WarningLevel previousWarning = turbomactop::WarningLevel::Normal;
     const double sessionStartedAt = monotonicSeconds();
     std::string pendingInput;
+    double pendingInputAt = 0.0;
+    uint64_t receivedControls = 0U;
+    std::string lastControl = "WAITING FOR INPUT";
 
     while (!stopRequested) {
         const double now = monotonicSeconds();
         char input[128];
-        const ssize_t count = read(STDIN_FILENO, input, sizeof(input));
+        const ssize_t count = read(terminal.inputFD(), input, sizeof(input));
         if (count > 0) {
             pendingInput.append(input, static_cast<std::size_t>(count));
+            pendingInputAt = now;
         }
         while (!pendingInput.empty()) {
-            const unsigned char key = static_cast<unsigned char>(pendingInput.front());
-            if (key == 0x1bU) {
-                if (pendingInput.size() < 3U) {
-                    break;
-                }
-                if (pendingInput[1] == '[') {
-                    const char direction = pendingInput[2];
-                    if (direction == 'A') {
-                        stress.setDuty(stress.duty() + 5);
-                    } else if (direction == 'B') {
-                        stress.setDuty(stress.duty() - 5);
-                    } else if (direction == 'C') {
-                        stress.setWorkers(stress.workerCount() + 1);
-                    } else if (direction == 'D') {
-                        stress.setWorkers(stress.workerCount() - 1);
-                    }
-                    pendingInput.erase(0U, 3U);
-                } else {
-                    pendingInput.erase(0U, 1U);
-                }
+            turbomactop::ControlAction action = turbomactop::ControlAction::None;
+            if (!turbomactop::consumeControlInput(&pendingInput, &action)) {
+                break;
+            }
+            if (action == turbomactop::ControlAction::None) {
                 continue;
             }
-            pendingInput.erase(0U, 1U);
-            if (key == ' ') {
-                if (!stress.enabled() && stress.duty() == 0) {
-                    stress.setDuty(5);
-                }
-                stress.setEnabled(!stress.enabled());
-            } else if (key == '0') {
-                stress.setEnabled(false);
-                stress.setDuty(0);
-            } else if (key == 'm' || key == 'M') {
-                stress.setDuty(100);
-                stress.setWorkers(static_cast<int>(kMaximumWorkers));
-            } else if (key == 'r' || key == 'R') {
-                resetPeaks(&peaks, status, frequency.mhz());
-            } else if (key == 'q' || key == 'Q') {
-                stopRequested = 1;
+            receivedControls++;
+            lastControl = turbomactop::controlActionName(action);
+            switch (action) {
+                case turbomactop::ControlAction::DutyUp:
+                    stress.setDuty(stress.duty() + 5);
+                    break;
+                case turbomactop::ControlAction::DutyDown:
+                    stress.setDuty(stress.duty() - 5);
+                    break;
+                case turbomactop::ControlAction::WorkersUp:
+                    stress.setWorkers(stress.workerCount() + 1);
+                    break;
+                case turbomactop::ControlAction::WorkersDown:
+                    stress.setWorkers(stress.workerCount() - 1);
+                    break;
+                case turbomactop::ControlAction::ToggleLoad:
+                    if (!stress.enabled() && stress.duty() == 0) {
+                        stress.setDuty(5);
+                    }
+                    stress.setEnabled(!stress.enabled());
+                    break;
+                case turbomactop::ControlAction::StopLoad:
+                    stress.setEnabled(false);
+                    stress.setDuty(0);
+                    break;
+                case turbomactop::ControlAction::MaximumPreset:
+                    stress.setDuty(100);
+                    stress.setWorkers(static_cast<int>(kMaximumWorkers));
+                    break;
+                case turbomactop::ControlAction::ResetPeaks:
+                    resetPeaks(&peaks, status, frequency.mhz());
+                    break;
+                case turbomactop::ControlAction::Quit:
+                    stopRequested = 1;
+                    break;
+                case turbomactop::ControlAction::None:
+                    break;
             }
+        }
+        if (!pendingInput.empty() && now - pendingInputAt > 0.2) {
+            pendingInput.erase(0U, 1U);
         }
 
         if (now - lastPollAt >= 0.25) {
@@ -769,6 +812,8 @@ int main(int argc, char **argv) {
             events,
             lastError,
             warnings,
+            receivedControls,
+            lastControl,
             now
         );
         std::this_thread::sleep_for(std::chrono::milliseconds(80));

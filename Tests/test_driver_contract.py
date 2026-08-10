@@ -199,6 +199,9 @@ assert "return sawError ? 1 : 0" in cli
 assert "NO AUTOMATIC CUTOFF" in tui
 assert "stress.setDuty(100)" in tui
 assert "kMaximumWorkers = 8U" in tui
+assert 'open("/dev/tty", O_RDONLY | O_NOCTTY)' in tui
+assert "</dev/null 2>/dev/null" in tui
+assert '"KEYBOARD  RX "' in tui
 assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation

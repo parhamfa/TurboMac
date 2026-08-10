@@ -42,6 +42,19 @@ enum class WarningLevel {
     Warning = 2,
 };
 
+enum class ControlAction {
+    None = 0,
+    DutyUp,
+    DutyDown,
+    WorkersUp,
+    WorkersDown,
+    ToggleLoad,
+    StopLoad,
+    MaximumPreset,
+    ResetPeaks,
+    Quit,
+};
+
 struct WarningState {
     WarningLevel level = WarningLevel::Normal;
     std::vector<std::string> messages;
@@ -49,6 +62,8 @@ struct WarningState {
 
 bool parseStatusJSON(const std::string &json, Snapshot *snapshot, std::string *error);
 bool parsePowermetricsFrequency(const std::string &line, double *mhz, double *percent);
+bool consumeControlInput(std::string *input, ControlAction *action);
+const char *controlActionName(ControlAction action);
 WarningState assessWarnings(
     const Snapshot &snapshot,
     bool statusStale,

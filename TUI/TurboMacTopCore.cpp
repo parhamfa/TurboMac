@@ -187,6 +187,150 @@ bool parsePowermetricsFrequency(const std::string &line, double *mhz, double *pe
     return true;
 }
 
+bool consumeControlInput(std::string *input, ControlAction *action) {
+    if (input == nullptr || action == nullptr || input->empty()) {
+        return false;
+    }
+
+    *action = ControlAction::None;
+    const unsigned char first = static_cast<unsigned char>((*input)[0]);
+    if (first == 0x1bU) {
+        if (input->size() < 2U) {
+            return false;
+        }
+        if ((*input)[1] == '[') {
+            std::size_t final = 2U;
+            while (final < input->size()) {
+                const unsigned char character = static_cast<unsigned char>((*input)[final]);
+                if (character >= 0x40U && character <= 0x7eU) {
+                    break;
+                }
+                final++;
+            }
+            if (final == input->size()) {
+                return false;
+            }
+            const char direction = (*input)[final];
+            *action = direction == 'A' ? ControlAction::DutyUp
+                : direction == 'B' ? ControlAction::DutyDown
+                : direction == 'C' ? ControlAction::WorkersUp
+                : direction == 'D' ? ControlAction::WorkersDown
+                : ControlAction::None;
+            input->erase(0U, final + 1U);
+            return true;
+        }
+        if ((*input)[1] == 'O') {
+            if (input->size() < 3U) {
+                return false;
+            }
+            const char direction = (*input)[2];
+            *action = direction == 'A' ? ControlAction::DutyUp
+                : direction == 'B' ? ControlAction::DutyDown
+                : direction == 'C' ? ControlAction::WorkersUp
+                : direction == 'D' ? ControlAction::WorkersDown
+                : ControlAction::None;
+            input->erase(0U, 3U);
+            return true;
+        }
+        input->erase(0U, 1U);
+        return true;
+    }
+
+    if (first == 0xe2U) {
+        if (input->size() < 3U) {
+            return false;
+        }
+        const unsigned char second = static_cast<unsigned char>((*input)[1]);
+        const unsigned char third = static_cast<unsigned char>((*input)[2]);
+        if (second == 0x86U) {
+            *action = third == 0x91U ? ControlAction::DutyUp
+                : third == 0x93U ? ControlAction::DutyDown
+                : third == 0x92U ? ControlAction::WorkersUp
+                : third == 0x90U ? ControlAction::WorkersDown
+                : ControlAction::None;
+        }
+        input->erase(0U, 3U);
+        return true;
+    }
+
+    input->erase(0U, 1U);
+    switch (first) {
+        case 'w':
+        case 'W':
+        case '+':
+        case '=':
+            *action = ControlAction::DutyUp;
+            break;
+        case 's':
+        case 'S':
+        case '-':
+        case '_':
+            *action = ControlAction::DutyDown;
+            break;
+        case 'd':
+        case 'D':
+        case ']':
+            *action = ControlAction::WorkersUp;
+            break;
+        case 'a':
+        case 'A':
+        case '[':
+            *action = ControlAction::WorkersDown;
+            break;
+        case ' ':
+        case '\r':
+        case '\n':
+            *action = ControlAction::ToggleLoad;
+            break;
+        case '0':
+        case 'x':
+        case 'X':
+            *action = ControlAction::StopLoad;
+            break;
+        case 'm':
+        case 'M':
+            *action = ControlAction::MaximumPreset;
+            break;
+        case 'r':
+        case 'R':
+            *action = ControlAction::ResetPeaks;
+            break;
+        case 'q':
+        case 'Q':
+            *action = ControlAction::Quit;
+            break;
+        default:
+            break;
+    }
+    return true;
+}
+
+const char *controlActionName(ControlAction action) {
+    switch (action) {
+        case ControlAction::DutyUp:
+            return "DUTY +5%";
+        case ControlAction::DutyDown:
+            return "DUTY -5%";
+        case ControlAction::WorkersUp:
+            return "WORKERS +1";
+        case ControlAction::WorkersDown:
+            return "WORKERS -1";
+        case ControlAction::ToggleLoad:
+            return "LOAD TOGGLE";
+        case ControlAction::StopLoad:
+            return "LOAD IDLE";
+        case ControlAction::MaximumPreset:
+            return "MAX PRESET";
+        case ControlAction::ResetPeaks:
+            return "PEAKS RESET";
+        case ControlAction::Quit:
+            return "QUIT";
+        case ControlAction::None:
+            return "IGNORED KEY";
+    }
+    return "UNKNOWN";
+}
+
 WarningState assessWarnings(
     const Snapshot &snapshot,
     bool statusStale,

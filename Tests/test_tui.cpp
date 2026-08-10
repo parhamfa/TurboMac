@@ -67,6 +67,36 @@ void testFrequencyParser() {
     assert(!turbomactop::parsePowermetricsFrequency("CPU Average frequency", &mhz, &percent));
 }
 
+void expectControl(std::string input, turbomactop::ControlAction expected) {
+    turbomactop::ControlAction action = turbomactop::ControlAction::None;
+    assert(turbomactop::consumeControlInput(&input, &action));
+    assert(action == expected);
+    assert(input.empty());
+}
+
+void testControlParser() {
+    expectControl("\x1b[A", turbomactop::ControlAction::DutyUp);
+    expectControl("\x1bOB", turbomactop::ControlAction::DutyDown);
+    expectControl("\x1b[1;5C", turbomactop::ControlAction::WorkersUp);
+    expectControl("\xe2\x86\x90", turbomactop::ControlAction::WorkersDown);
+    expectControl("w", turbomactop::ControlAction::DutyUp);
+    expectControl("S", turbomactop::ControlAction::DutyDown);
+    expectControl("]", turbomactop::ControlAction::WorkersUp);
+    expectControl(" ", turbomactop::ControlAction::ToggleLoad);
+    expectControl("\r", turbomactop::ControlAction::ToggleLoad);
+    expectControl("x", turbomactop::ControlAction::StopLoad);
+    expectControl("M", turbomactop::ControlAction::MaximumPreset);
+    expectControl("q", turbomactop::ControlAction::Quit);
+
+    std::string partial = "\x1b[1;";
+    turbomactop::ControlAction action = turbomactop::ControlAction::None;
+    assert(!turbomactop::consumeControlInput(&partial, &action));
+    partial += "2A";
+    assert(turbomactop::consumeControlInput(&partial, &action));
+    assert(action == turbomactop::ControlAction::DutyUp);
+    assert(partial.empty());
+}
+
 void testWarningsAreVisualOnly() {
     turbomactop::Snapshot status;
     std::string error;
@@ -109,6 +139,7 @@ void testSparkline() {
 int main() {
     testStatusParser();
     testFrequencyParser();
+    testControlParser();
     testWarningsAreVisualOnly();
     testSparkline();
     std::cout << "turbomactop tests passed\n";
