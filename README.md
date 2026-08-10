@@ -98,6 +98,35 @@ root-owned profile, exact identity matching, and a prior successful fixed
 Whisper validation. On a later boot, auto-arm still passes through the same
 verified 5 W HWP bootstrap stage.
 
+## Cockpit stress dashboard
+
+`turbomactop` is a full-screen ANSI terminal dashboard for supervised live
+experiments. It reads the protected daemon status socket, samples real CPU MHz
+through `powermetrics`, and displays total input, adapter capacity, package and
+estimated non-CPU power, temperature, governor band, PL1/PL2, HWP/guard health,
+headroom, session peaks, transitions, and a 60-second input-power trend.
+
+Run it in a terminal on the governed Mac:
+
+```sh
+sudo /usr/local/bin/turbomactop
+```
+
+The integrated AVX2/FMA load is manual and begins stopped at zero duty. Up/down
+changes each active worker's duty by 5%, left/right selects 1-8 workers, Space
+starts or stops, `M` selects the 100% x 8 maximum preset without starting it,
+`0` immediately returns the generator to idle, `R` resets session peaks, and
+`Q` exits. `--no-frequency` disables the `powermetrics` subprocess if only the
+TurboMac socket metrics are wanted.
+
+There is deliberately no automatic watt, temperature, telemetry, or governor-
+state cutoff. Amber/red cockpit annunciators and the terminal bell are warnings
+only; the selected load continues until the operator stops it or the process is
+terminated. At 100% x 8 the workload continuously drives all logical CPUs with
+AVX2/FMA and can cause abrupt power loss on the batteryless target. Save work
+before testing and do not mistake a surviving run for proof of a safe input
+boundary.
+
 ## Build and test
 
 Xcode 26's toolchain and SDK are used directly.

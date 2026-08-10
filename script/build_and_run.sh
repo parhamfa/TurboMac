@@ -21,7 +21,8 @@ case "$MODE" in
       build/Release/TurboMac.kext/Contents/MacOS/TurboMac \
       build/Release/turbomacd \
       build/Release/turbomacctl \
-      build/Release/turbomac-avx2-load
+      build/Release/turbomac-avx2-load \
+      build/Release/turbomactop
     ;;
   --logs|logs)
     if [[ -r /var/log/turbomacd.jsonl ]]; then

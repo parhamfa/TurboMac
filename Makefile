@@ -12,7 +12,7 @@ KEXT := $(RELEASE)/TurboMac.kext
 KEXT_MACOS := $(KEXT)/Contents/MacOS
 PACKAGE := $(BUILD)/package
 
-USER_CXXFLAGS := -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VERSION) -std=c++17 -O2 -Wall -Wextra -Werror -IShared -IDaemon
+USER_CXXFLAGS := -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VERSION) -std=c++17 -O2 -Wall -Wextra -Werror -IShared -IDaemon -ITUI
 USER_CFLAGS := -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VERSION) -std=c11 -O2 -Wall -Wextra -Werror -IDaemon
 KEXT_CXXFLAGS := -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VERSION) -std=gnu++17 -O2 -mkernel -fapple-kext -fno-builtin -fno-exceptions -fno-rtti -fno-common -nostdinc++ -Wall -Wextra -Werror -I"$(SDK)/System/Library/Frameworks/Kernel.framework/Headers" -IShared -ITurboMac
 
@@ -20,7 +20,7 @@ KEXT_CXXFLAGS := -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VER
 
 all: package
 
-build: $(KEXT_MACOS)/TurboMac $(RELEASE)/turbomacd $(RELEASE)/turbomacctl $(RELEASE)/turbomac-avx2-load
+build: $(KEXT_MACOS)/TurboMac $(RELEASE)/turbomacd $(RELEASE)/turbomacctl $(RELEASE)/turbomac-avx2-load $(RELEASE)/turbomactop
 
 $(OBJ):
 	mkdir -p "$@"
@@ -68,10 +68,20 @@ $(RELEASE)/turbomacctl: CLI/main.cpp | $(RELEASE)
 $(RELEASE)/turbomac-avx2-load: Calibration/avx2_load.cpp | $(RELEASE)
 	$(CXX) $(USER_CXXFLAGS) -mavx2 -mfma "$<" -o "$@"
 
+$(OBJ)/TurboMacTopCore.o: TUI/TurboMacTopCore.cpp TUI/TurboMacTopCore.h | $(OBJ)
+	$(CXX) $(USER_CXXFLAGS) -c "$<" -o "$@"
+
+$(OBJ)/TurboMacTopMain.o: TUI/main.cpp TUI/TurboMacTopCore.h | $(OBJ)
+	$(CXX) $(USER_CXXFLAGS) -mavx2 -mfma -c "$<" -o "$@"
+
+$(RELEASE)/turbomactop: $(OBJ)/TurboMacTopMain.o $(OBJ)/TurboMacTopCore.o | $(RELEASE)
+	$(CXX) -arch $(ARCH) -isysroot "$(SDK)" -mmacosx-version-min=$(MIN_VERSION) $^ -o "$@"
+
 sign: build
 	codesign --force --sign - --timestamp=none "$(RELEASE)/turbomacd"
 	codesign --force --sign - --timestamp=none "$(RELEASE)/turbomacctl"
 	codesign --force --sign - --timestamp=none "$(RELEASE)/turbomac-avx2-load"
+	codesign --force --sign - --timestamp=none "$(RELEASE)/turbomactop"
 	codesign --force --sign - --timestamp=none "$(KEXT)"
 
 package: sign
@@ -80,6 +90,7 @@ package: sign
 	ditto "$(KEXT)" "$(PACKAGE)/Library/Extensions/TurboMac.kext"
 	install -m 0644 Deploy/com.parham.turbomacd.plist "$(PACKAGE)/Library/LaunchDaemons/com.parham.turbomacd.plist"
 	install -m 0755 "$(RELEASE)/turbomacctl" "$(PACKAGE)/usr/local/bin/turbomacctl"
+	install -m 0755 "$(RELEASE)/turbomactop" "$(PACKAGE)/usr/local/bin/turbomactop"
 	install -m 0755 "$(RELEASE)/turbomacd" "$(PACKAGE)/usr/local/libexec/turbomacd"
 	install -m 0755 "$(RELEASE)/turbomac-avx2-load" "$(PACKAGE)/usr/local/libexec/turbomac-avx2-load"
 	install -m 0755 Deploy/finalize-passive.sh "$(PACKAGE)/usr/local/libexec/turbomac-finalize-passive"
@@ -88,19 +99,20 @@ package: sign
 verify: package
 	plutil -lint "$(KEXT)/Contents/Info.plist" Deploy/com.parham.turbomacd.plist
 	codesign --verify --strict --verbose=4 "$(KEXT)"
-	codesign --verify --strict --verbose=4 "$(RELEASE)/turbomacd" "$(RELEASE)/turbomacctl" "$(RELEASE)/turbomac-avx2-load"
-	file "$(KEXT_MACOS)/TurboMac" "$(RELEASE)/turbomacd" "$(RELEASE)/turbomacctl" "$(RELEASE)/turbomac-avx2-load" | grep -c 'x86_64' | grep -q '^4$$'
+	codesign --verify --strict --verbose=4 "$(RELEASE)/turbomacd" "$(RELEASE)/turbomacctl" "$(RELEASE)/turbomac-avx2-load" "$(RELEASE)/turbomactop"
+	file "$(KEXT_MACOS)/TurboMac" "$(RELEASE)/turbomacd" "$(RELEASE)/turbomacctl" "$(RELEASE)/turbomac-avx2-load" "$(RELEASE)/turbomactop" | grep -c 'x86_64' | grep -q '^5$$'
 	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _kmod_info$$'
 	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _TurboMacModuleStart$$'
 	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _TurboMacModuleStop$$'
 	@if [[ "$$(uname -m)" == "x86_64" ]]; then kmutil print-diagnostics -a x86_64 -z -p "$(KEXT)"; else echo "kmutil loadability diagnostics deferred to the x86_64 target host"; fi
 
-test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_hwp $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/test_calibration $(BUILD)/tests/replay_observer
+test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_hwp $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/test_calibration $(BUILD)/tests/test_tui $(BUILD)/tests/replay_observer
 	"$(BUILD)/tests/test_rapl"
 	"$(BUILD)/tests/test_hwp"
 	"$(BUILD)/tests/test_policy"
 	"$(BUILD)/tests/test_temperature"
 	"$(BUILD)/tests/test_calibration"
+	"$(BUILD)/tests/test_tui"
 	python3 Tests/test_driver_contract.py
 
 $(BUILD)/tests:
@@ -120,6 +132,9 @@ $(BUILD)/tests/test_temperature: Tests/test_temperature.cpp Daemon/TemperatureRe
 
 $(BUILD)/tests/test_calibration: Tests/test_calibration.cpp Daemon/Calibration.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IDaemon "$<" -o "$@"
+
+$(BUILD)/tests/test_tui: Tests/test_tui.cpp TUI/TurboMacTopCore.cpp TUI/TurboMacTopCore.h | $(BUILD)/tests
+	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -ITUI Tests/test_tui.cpp TUI/TurboMacTopCore.cpp -o "$@"
 
 $(BUILD)/tests/replay_observer: Tests/replay_observer.cpp Daemon/Policy.cpp Daemon/Policy.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IShared -IDaemon Tests/replay_observer.cpp Daemon/Policy.cpp -o "$@"

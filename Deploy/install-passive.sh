@@ -49,6 +49,7 @@ restore_failed_install() {
     /usr/local/libexec/turbomac-finalize-passive \
     /usr/local/libexec/turbomac-rollback \
     /usr/local/bin/turbomacctl \
+    /usr/local/bin/turbomactop \
     /Library/LaunchDaemons/com.parham.turbomacd.plist; do
     if [[ -e "$target" ]]; then
       mv "$target" "$failed_dir/$(basename "$target")"
@@ -66,6 +67,7 @@ restore_failed_install() {
     /usr/local/libexec/turbomac-finalize-passive \
     /usr/local/libexec/turbomac-rollback \
     /usr/local/bin/turbomacctl \
+    /usr/local/bin/turbomactop \
     /Library/LaunchDaemons/com.parham.turbomacd.plist; do
     local saved
     saved="$BACKUP_DIR/original-$(basename "$target")"
@@ -111,6 +113,7 @@ for live_file in \
   /usr/local/libexec/turbomacd \
   /usr/local/libexec/turbomac-avx2-load \
   /usr/local/bin/turbomacctl \
+  /usr/local/bin/turbomactop \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   if [[ -f "$live_file" ]]; then
     shasum -a 256 "$live_file" >>"$BACKUP_DIR/live-files-before-sha256.txt"
@@ -139,6 +142,7 @@ for target in \
   /usr/local/libexec/turbomac-finalize-passive \
   /usr/local/libexec/turbomac-rollback \
   /usr/local/bin/turbomacctl \
+  /usr/local/bin/turbomactop \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   if [[ -e "$target" ]]; then
     ditto "$target" "$BACKUP_DIR/original-$(basename "$target")"
@@ -153,6 +157,7 @@ chmod 0755 "$KEXT_TARGET/Contents/MacOS/TurboMac"
 
 install -d -m 0755 -o root -g wheel /usr/local/bin /usr/local/libexec
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/bin/turbomacctl" /usr/local/bin/turbomacctl
+install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/bin/turbomactop" /usr/local/bin/turbomactop
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomacd" /usr/local/libexec/turbomacd
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomac-avx2-load" /usr/local/libexec/turbomac-avx2-load
 install -m 0755 -o root -g wheel "$PACKAGE_DIR/usr/local/libexec/turbomac-finalize-passive" /usr/local/libexec/turbomac-finalize-passive

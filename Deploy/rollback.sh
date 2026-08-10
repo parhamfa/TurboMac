@@ -33,6 +33,7 @@ for target in \
   /usr/local/libexec/turbomac-finalize-passive \
   /usr/local/libexec/turbomac-rollback \
   /usr/local/bin/turbomacctl \
+  /usr/local/bin/turbomactop \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   if [[ -e "$target" ]]; then
     mv "$target" "$RECOVERY_DIR/$(basename "$target")"
@@ -50,6 +51,7 @@ for target in \
   /usr/local/libexec/turbomac-finalize-passive \
   /usr/local/libexec/turbomac-rollback \
   /usr/local/bin/turbomacctl \
+  /usr/local/bin/turbomactop \
   /Library/LaunchDaemons/com.parham.turbomacd.plist; do
   saved="$BACKUP_DIR/original-$(basename "$target")"
   if [[ -e "$saved" ]]; then

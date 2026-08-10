@@ -7,6 +7,7 @@ driver = (root / "TurboMac" / "TurboMac.cpp").read_text()
 client = (root / "TurboMac" / "TurboMacUserClient.cpp").read_text()
 daemon = (root / "Daemon" / "main.cpp").read_text()
 cli = (root / "CLI" / "main.cpp").read_text()
+tui = (root / "TUI" / "main.cpp").read_text()
 validation = (root / "Deploy" / "whisper-validation.example").read_text()
 validation_configure = (
     root / "Deploy" / "configure-whisper-validation.sh"
@@ -195,6 +196,9 @@ assert "TurboMacCapabilities statusCapabilities" in daemon
 assert "driver_.capabilities(\n            &statusCapabilities" in daemon
 assert "std::fflush(stdout)" in cli
 assert "return sawError ? 1 : 0" in cli
+assert "NO AUTOMATIC CUTOFF" in tui
+assert "stress.setDuty(100)" in tui
+assert "kMaximumWorkers = 8U" in tui
 assert "/usr/bin/shasum" in validation
 assert "/usr/bin/sudo -n -u" in validation
 assert "--threads 8" in validation
@@ -213,6 +217,7 @@ assert 'grep -F "$bundle_id"' in installer
 assert 'launchctl-turbomacd.txt' in installer
 assert 'live-files-before-sha256.txt' in installer
 assert 'turbomac-rollback' in installer
+assert 'turbomactop' in installer
 assert 'KEXT_POLICY_EXIT=27' in finalizer
 assert 'do not reboot' in finalizer
 assert driver_info["OSBundleLibraries"] == {
