@@ -15,7 +15,7 @@ struct MachineIdentity {
 };
 
 struct CalibrationProfile {
-    uint32_t schemaVersion = 1U;
+    uint32_t schemaVersion = 2U;
     MachineIdentity identity;
     double calibratedCapacityW = 0.0;
     double reserveW = 2.0;
@@ -25,6 +25,12 @@ struct CalibrationProfile {
     double cruisePL2BurstW = 0.0;
     double packageToInputSlope = 1.0;
     double packageToInputInterceptW = 0.0;
+    double guardRatio = 0.5661;
+    double shedRatio = 0.6541;
+    double emergencyRatio = 0.7296;
+    double cruiseTargetRatio = 0.5661;
+    double guardTargetRatio = 0.5221;
+    double shedTargetRatio = 0.4781;
     uint32_t calibrationPointCount = 0U;
     bool validationPassed = false;
     bool autoArm = false;

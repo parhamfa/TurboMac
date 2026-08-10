@@ -80,6 +80,55 @@ int main() {
     expectClose(upscaled.snapshot().shedW, 65.41);
     expectClose(upscaled.snapshot().emergencyW, 72.96);
 
+    PolicyConfig aggressiveConfig = config();
+    aggressiveConfig.raplFloorW = 9.0;
+    aggressiveConfig.raplCeilingPL1W = 43.0;
+    aggressiveConfig.raplCeilingPL2W = 45.0;
+    aggressiveConfig.cruisePL2BurstW = 2.0;
+    aggressiveConfig.guardRatio = 55.0 / 79.496;
+    aggressiveConfig.shedRatio = 60.0 / 79.496;
+    aggressiveConfig.emergencyRatio = 65.0 / 79.496;
+    aggressiveConfig.cruiseTargetRatio = 55.0 / 79.496;
+    aggressiveConfig.guardTargetRatio = 48.0 / 79.496;
+    aggressiveConfig.shedTargetRatio = 42.0 / 79.496;
+    GovernorPolicy aggressive(aggressiveConfig);
+    double aggressiveTime = advance(aggressive, 0.0, 2.0, 44.0, 79.496, 34.0);
+    expectClose(aggressive.snapshot().guardW, 55.0);
+    expectClose(aggressive.snapshot().shedW, 60.0);
+    expectClose(aggressive.snapshot().emergencyW, 65.0);
+    expectClose(aggressive.snapshot().stateTargetW, 55.0);
+    expectClose(aggressive.snapshot().desiredPL1W, 43.0);
+    expectClose(aggressive.snapshot().pl1W, 43.0);
+    expectClose(aggressive.snapshot().pl2W, 45.0);
+
+    const double cruisePL1 = aggressive.snapshot().pl1W;
+    aggressiveTime = advance(
+        aggressive, aggressiveTime, 3.2, 56.0, 79.496, 43.0
+    );
+    assert(aggressive.snapshot().band == GovernorBand::Guard);
+    expectClose(aggressive.snapshot().stateTargetW, 48.0);
+    assert(aggressive.snapshot().pl1W < cruisePL1 - 4.0);
+    const double guardPL1 = aggressive.snapshot().pl1W;
+
+    aggressiveTime = advance(
+        aggressive, aggressiveTime, 2.2, 61.0, 79.496, 45.0
+    );
+    assert(aggressive.snapshot().band == GovernorBand::Shed);
+    expectClose(aggressive.snapshot().stateTargetW, 42.0);
+    assert(aggressive.snapshot().pl1W < guardPL1 - 3.0);
+
+    advance(aggressive, aggressiveTime, 0.2, 65.1, 79.496, 45.0);
+    assert(aggressive.snapshot().band == GovernorBand::Emergency);
+    expectClose(aggressive.snapshot().stateTargetW, 9.0);
+    expectClose(aggressive.snapshot().pl1W, 9.0);
+    expectClose(aggressive.snapshot().pl2W, 9.0);
+
+    GovernorPolicy aggressiveScaled(aggressiveConfig);
+    advance(aggressiveScaled, 0.0, 2.0, 20.0, 60.0, 8.0);
+    expectClose(aggressiveScaled.snapshot().guardW, 55.0 * 60.0 / 79.496);
+    expectClose(aggressiveScaled.snapshot().shedW, 60.0 * 60.0 / 79.496);
+    expectClose(aggressiveScaled.snapshot().emergencyW, 65.0 * 60.0 / 79.496);
+
     PolicyConfig mappedConfig = config();
     mappedConfig.packageToInputSlope = 1.5;
     mappedConfig.packageToInputInterceptW = 10.0;
@@ -231,6 +280,6 @@ int main() {
     advance(nearGuard, 0.0, 2.0, 44.0, 79.496, 34.0);
     expectClose(nearGuard.snapshot().recoveryIntervalS, 5.0);
 
-    std::cout << "policy scaling, causal rail alignment, 45/52/58 tiers, hysteresis, and adaptive recovery tests passed\n";
+    std::cout << "policy scaling, independent state targets, balanced and aggressive tiers, causal rail alignment, hysteresis, and adaptive recovery tests passed\n";
     return 0;
 }

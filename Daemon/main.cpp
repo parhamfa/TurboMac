@@ -822,6 +822,12 @@ private:
             config.cruisePL2BurstW = profile_.cruisePL2BurstW;
             config.packageToInputSlope = profile_.packageToInputSlope;
             config.packageToInputInterceptW = profile_.packageToInputInterceptW;
+            config.guardRatio = profile_.guardRatio;
+            config.shedRatio = profile_.shedRatio;
+            config.emergencyRatio = profile_.emergencyRatio;
+            config.cruiseTargetRatio = profile_.cruiseTargetRatio;
+            config.guardTargetRatio = profile_.guardTargetRatio;
+            config.shedTargetRatio = profile_.shedTargetRatio;
         }
         policy_.reset(config);
         energyTracker_.reset();
@@ -985,6 +991,7 @@ private:
                << ",\"guard_w\":" << snapshot.guardW
                << ",\"shed_w\":" << snapshot.shedW
                << ",\"emergency_w\":" << snapshot.emergencyW
+               << ",\"state_target_w\":" << snapshot.stateTargetW
                << ",\"desired_pl1_w\":" << snapshot.desiredPL1W
                << ",\"pl1_w\":" << snapshot.pl1W
                << ",\"pl2_w\":" << snapshot.pl2W
@@ -1057,6 +1064,22 @@ private:
                << (hwpStatusValid ? hwpStatus.failsafe_request_raw : 0U)
                << ",\"driver_capability_flags\":"
                << (statusCapabilitiesValid ? statusCapabilities.flags : 0U)
+               << ",\"driver_minimum_power_w\":"
+               << (statusCapabilitiesValid
+                    ? (double)statusCapabilities.minimum_power_mw / 1000.0
+                    : 0.0)
+               << ",\"driver_maximum_power_w\":"
+               << (statusCapabilitiesValid
+                    ? (double)statusCapabilities.maximum_power_mw / 1000.0
+                    : 0.0)
+               << ",\"driver_thermal_spec_power_w\":"
+               << (statusCapabilitiesValid
+                    ? (double)statusCapabilities.thermal_spec_power_mw / 1000.0
+                    : 0.0)
+               << ",\"driver_ceiling_pl1_w\":"
+               << (driverStatusValid ? (double)driverStatus.ceiling_pl1_mw / 1000.0 : 0.0)
+               << ",\"driver_ceiling_pl2_w\":"
+               << (driverStatusValid ? (double)driverStatus.ceiling_pl2_mw / 1000.0 : 0.0)
                << ",\"driver_state\":"
                << (driverStatusValid ? driverStatus.driver_state : UINT32_MAX)
                << ",\"driver_restore_reason\":"

@@ -106,12 +106,13 @@ verify: package
 	nm -g "$(KEXT_MACOS)/TurboMac" | grep -E ' _TurboMacModuleStop$$'
 	@if [[ "$$(uname -m)" == "x86_64" ]]; then kmutil print-diagnostics -a x86_64 -z -p "$(KEXT)"; else echo "kmutil loadability diagnostics deferred to the x86_64 target host"; fi
 
-test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_hwp $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/test_calibration $(BUILD)/tests/test_tui $(BUILD)/tests/replay_observer
+test: $(BUILD)/tests/test_rapl $(BUILD)/tests/test_hwp $(BUILD)/tests/test_policy $(BUILD)/tests/test_temperature $(BUILD)/tests/test_calibration $(BUILD)/tests/test_profile $(BUILD)/tests/test_tui $(BUILD)/tests/replay_observer
 	"$(BUILD)/tests/test_rapl"
 	"$(BUILD)/tests/test_hwp"
 	"$(BUILD)/tests/test_policy"
 	"$(BUILD)/tests/test_temperature"
 	"$(BUILD)/tests/test_calibration"
+	"$(BUILD)/tests/test_profile"
 	"$(BUILD)/tests/test_tui"
 	python3 Tests/test_driver_contract.py
 
@@ -132,6 +133,9 @@ $(BUILD)/tests/test_temperature: Tests/test_temperature.cpp Daemon/TemperatureRe
 
 $(BUILD)/tests/test_calibration: Tests/test_calibration.cpp Daemon/Calibration.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IDaemon "$<" -o "$@"
+
+$(BUILD)/tests/test_profile: Tests/test_profile.cpp Daemon/Profile.cpp Daemon/Profile.h | $(BUILD)/tests
+	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -IDaemon Tests/test_profile.cpp Daemon/Profile.cpp -framework IOKit -framework CoreFoundation -o "$@"
 
 $(BUILD)/tests/test_tui: Tests/test_tui.cpp TUI/TurboMacTopCore.cpp TUI/TurboMacTopCore.h | $(BUILD)/tests
 	$(CXX) -isysroot "$(SDK)" -std=c++17 -O2 -Wall -Wextra -Werror -ITUI Tests/test_tui.cpp TUI/TurboMacTopCore.cpp -o "$@"

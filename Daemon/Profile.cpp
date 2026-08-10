@@ -204,7 +204,7 @@ bool ProfileStore::load(CalibrationProfile *profile, std::string *error) {
         }
     }
 
-    const std::set<std::string> expected = {
+    const std::set<std::string> common = {
         "schema_version", "hardware_uuid", "model_identifier", "cpu_brand",
         "os_product_version", "os_build", "smc_pdtr_type", "smc_acpw_type",
         "calibrated_capacity_w", "reserve_w", "rapl_floor_w",
@@ -213,6 +213,20 @@ bool ProfileStore::load(CalibrationProfile *profile, std::string *error) {
         "calibration_point_count", "validation_passed", "auto_arm",
         "calibrated_at", "validated_at"
     };
+    const auto schemaValue = values.find("schema_version");
+    int64_t schema = 0;
+    if (schemaValue == values.end()
+        || !parseInt64(schemaValue->second, &schema)
+        || (schema != 1 && schema != 2)) {
+        return setError(error, "profile contains an unsupported schema version");
+    }
+    std::set<std::string> expected = common;
+    if (schema == 2) {
+        expected.insert({
+            "guard_ratio", "shed_ratio", "emergency_ratio",
+            "cruise_target_ratio", "guard_target_ratio", "shed_target_ratio"
+        });
+    }
     if (values.size() != expected.size()) {
         return setError(error, "profile has missing or unexpected keys");
     }
@@ -222,10 +236,8 @@ bool ProfileStore::load(CalibrationProfile *profile, std::string *error) {
         }
     }
 
-    int64_t schema = 0;
-    if (!parseInt64(values["schema_version"], &schema)
-        || schema != 1
-        || !parseDouble(values["calibrated_capacity_w"], &profile->calibratedCapacityW)
+    *profile = CalibrationProfile{};
+    if (!parseDouble(values["calibrated_capacity_w"], &profile->calibratedCapacityW)
         || !parseDouble(values["reserve_w"], &profile->reserveW)
         || !parseDouble(values["rapl_floor_w"], &profile->raplFloorW)
         || !parseDouble(values["rapl_ceiling_pl1_w"], &profile->raplCeilingPL1W)
@@ -239,6 +251,15 @@ bool ProfileStore::load(CalibrationProfile *profile, std::string *error) {
         || (values["auto_arm"] != "true" && values["auto_arm"] != "false")) {
         return setError(error, "profile contains an invalid value");
     }
+    if (schema == 2
+        && (!parseDouble(values["guard_ratio"], &profile->guardRatio)
+            || !parseDouble(values["shed_ratio"], &profile->shedRatio)
+            || !parseDouble(values["emergency_ratio"], &profile->emergencyRatio)
+            || !parseDouble(values["cruise_target_ratio"], &profile->cruiseTargetRatio)
+            || !parseDouble(values["guard_target_ratio"], &profile->guardTargetRatio)
+            || !parseDouble(values["shed_target_ratio"], &profile->shedTargetRatio))) {
+        return setError(error, "profile contains an invalid control policy");
+    }
     int64_t pointCount = 0;
     if (!parseInt64(values["calibration_point_count"], &pointCount)
         || pointCount < 1
@@ -246,7 +267,7 @@ bool ProfileStore::load(CalibrationProfile *profile, std::string *error) {
         return setError(error, "profile contains an invalid calibration point count");
     }
     profile->calibrationPointCount = (uint32_t)pointCount;
-    profile->schemaVersion = 1U;
+    profile->schemaVersion = (uint32_t)schema;
     profile->validationPassed = values["validation_passed"] == "true";
     profile->autoArm = values["auto_arm"] == "true";
     profile->identity.hardwareUUID = values["hardware_uuid"];
@@ -270,8 +291,9 @@ bool ProfileStore::save(const CalibrationProfile &profile, std::string *error) {
         return setError(error, "profile directory permissions could not be secured");
     }
 
-    std::string content = "# TurboMac RAPL calibration profile v1\n";
-    content += line("schema_version", "1");
+    std::string content = "# TurboMac RAPL calibration profile v"
+        + std::to_string(profile.schemaVersion) + "\n";
+    content += line("schema_version", std::to_string(profile.schemaVersion));
     content += line("hardware_uuid", profile.identity.hardwareUUID);
     content += line("model_identifier", profile.identity.modelIdentifier);
     content += line("cpu_brand", profile.identity.cpuBrand);
@@ -287,6 +309,14 @@ bool ProfileStore::save(const CalibrationProfile &profile, std::string *error) {
     content += line("cruise_pl2_burst_w", profile.cruisePL2BurstW);
     content += line("package_to_input_slope", profile.packageToInputSlope);
     content += line("package_to_input_intercept_w", profile.packageToInputInterceptW);
+    if (profile.schemaVersion == 2U) {
+        content += line("guard_ratio", profile.guardRatio);
+        content += line("shed_ratio", profile.shedRatio);
+        content += line("emergency_ratio", profile.emergencyRatio);
+        content += line("cruise_target_ratio", profile.cruiseTargetRatio);
+        content += line("guard_target_ratio", profile.guardTargetRatio);
+        content += line("shed_target_ratio", profile.shedTargetRatio);
+    }
     content += line("calibration_point_count", std::to_string(profile.calibrationPointCount));
     content += line("validation_passed", profile.validationPassed ? "true" : "false");
     content += line("auto_arm", profile.autoArm ? "true" : "false");
@@ -327,7 +357,7 @@ bool ProfileStore::save(const CalibrationProfile &profile, std::string *error) {
 
 bool ProfileStore::validate(const CalibrationProfile &profile, std::string *error) {
     const MachineIdentity &identity = profile.identity;
-    if (profile.schemaVersion != 1U
+    if ((profile.schemaVersion != 1U && profile.schemaVersion != 2U)
         || !safeText(identity.hardwareUUID)
         || !safeText(identity.modelIdentifier)
         || !safeText(identity.cpuBrand)
@@ -356,6 +386,20 @@ bool ProfileStore::validate(const CalibrationProfile &profile, std::string *erro
         || !std::isfinite(profile.packageToInputInterceptW)
         || profile.packageToInputInterceptW < -20.0
         || profile.packageToInputInterceptW > 100.0
+        || !std::isfinite(profile.guardRatio)
+        || !std::isfinite(profile.shedRatio)
+        || !std::isfinite(profile.emergencyRatio)
+        || profile.guardRatio < 0.1
+        || profile.guardRatio >= profile.shedRatio
+        || profile.shedRatio >= profile.emergencyRatio
+        || profile.emergencyRatio > 0.95
+        || !std::isfinite(profile.cruiseTargetRatio)
+        || !std::isfinite(profile.guardTargetRatio)
+        || !std::isfinite(profile.shedTargetRatio)
+        || profile.shedTargetRatio < 0.05
+        || profile.shedTargetRatio >= profile.guardTargetRatio
+        || profile.guardTargetRatio >= profile.cruiseTargetRatio
+        || profile.cruiseTargetRatio > profile.guardRatio
         || profile.calibrationPointCount < 1U
         || profile.calibratedAt <= 0
         || (profile.validationPassed && profile.validatedAt < profile.calibratedAt)

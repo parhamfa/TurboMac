@@ -188,9 +188,9 @@ void GovernorPolicy::expireSamples(double now) {
 
 void GovernorPolicy::updateThresholds() {
     snapshot_.capacityW = median(capacitySamples_);
-    snapshot_.guardW = kGuardRatio * snapshot_.capacityW;
-    snapshot_.shedW = kShedRatio * snapshot_.capacityW;
-    snapshot_.emergencyW = kEmergencyRatio * snapshot_.capacityW;
+    snapshot_.guardW = config_.guardRatio * snapshot_.capacityW;
+    snapshot_.shedW = config_.shedRatio * snapshot_.capacityW;
+    snapshot_.emergencyW = config_.emergencyRatio * snapshot_.capacityW;
 }
 
 void GovernorPolicy::updateNonCPU(double now) {
@@ -388,14 +388,13 @@ double GovernorPolicy::recoveryInterval() const {
 }
 
 double GovernorPolicy::targetForBand() const {
-    const double gap = snapshot_.shedW - snapshot_.guardW;
     switch (snapshot_.band) {
         case GovernorBand::Cruise:
-            return snapshot_.guardW;
+            return config_.cruiseTargetRatio * snapshot_.capacityW;
         case GovernorBand::Guard:
-            return snapshot_.guardW - 0.5 * gap;
+            return config_.guardTargetRatio * snapshot_.capacityW;
         case GovernorBand::Shed:
-            return snapshot_.guardW - gap;
+            return config_.shedTargetRatio * snapshot_.capacityW;
         case GovernorBand::Emergency:
             return config_.raplFloorW;
     }

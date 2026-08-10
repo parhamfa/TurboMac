@@ -36,13 +36,24 @@ guarantee that the Mac will not lose power.
 ## Control bands
 
 The observed `45/52/58 W` values are controller bands, not proven shutdown-safe
-limits. They scale continuously from the median live AppleSMC `ACPW` value:
+limits. They are the schema-v1/default policy and scale continuously from the
+median live AppleSMC `ACPW` value:
 
 | Band | Ratio of ACPW | At ACPW 79.496 W |
 |---|---:|---:|
 | Guard | 56.61% | 45.003 W |
 | Shed | 65.41% | 51.998 W |
 | Emergency | 72.96% | 58.000 W |
+
+Schema-v2 profiles can override all three ratios and independently set the
+cruise, guard, and shed target ratios. Keeping transition thresholds separate
+from state targets matters for aggressive experiments: a `55/60/65 W` profile
+with targets derived only from its 5 W gap would barely reduce CPU power in
+guard or shed. The supervised aggressive profile for this host instead uses
+`55/60/65 W` thresholds, `55/48/42 W` state targets, and the calibrated RAPL
+floor for emergency. Profile validation requires ordered thresholds, ordered
+targets no higher than guard, and at least 5% ACPW below negotiated capacity at
+the emergency boundary.
 
 The daemon samples package energy at 10 Hz and AppleSMC `PDTR`/`ACPW` at 4 Hz.
 It estimates non-CPU input from filtered input minus the one-second median CPU
@@ -153,8 +164,9 @@ them, verifies signatures and plists, and creates `build/package`. On an x86_64
 target it also runs `kmutil print-diagnostics -z` for this explicitly
 SIP-disabled, ad-hoc-signed installation. Tests cover RAPL encoding, HWP field
 preservation and package/local source selection, 32-bit energy wraparound,
-malformed requests, watchdog timing, controller scaling, transitions,
-hysteresis, slew limiting, and the 45/52/58 paths.
+malformed requests, watchdog timing, profile policy bounds, controller scaling,
+independent state targets, transitions, hysteresis, slew limiting, and both the
+balanced and aggressive paths.
 
 Historical observer logs can be replayed without actuation:
 
