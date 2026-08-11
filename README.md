@@ -228,7 +228,9 @@ temporarily inflated post-load non-CPU filter. Its absolute PL2 ceiling is also
 capped at the largest value actually tested from that base. Calibration finishes disarmed,
 which leaves HWP enabled under its conservative fail-safe until reboot. It also
 leaves auto-arm disabled. Only a successful protected, fixed Whisper workload
-enables auto-arm.
+enables auto-arm. Validation aborts at the active profile's live shed threshold
+(52 W for the balanced profile and 60 W for the 55/60/65 W profile), so adapter
+capacity scaling and the configured controller bands remain authoritative.
 
 `Deploy/build-whisper-validation-runtime.sh` reproducibly builds the pinned GGML
 0.17.0 and whisper.cpp 1.9.1 sources with GGML's default backend directory set

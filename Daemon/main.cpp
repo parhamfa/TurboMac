@@ -1767,7 +1767,23 @@ private:
             writeAll(client, "ERROR " + error + "\n");
             return;
         }
-        writeAll(client, "Whisper validation started; hard abort remains 52 W / 95 C.\n");
+        const PolicySnapshot initialValidationSnapshot = policy_.snapshot();
+        if (!initialValidationSnapshot.ready
+            || !std::isfinite(initialValidationSnapshot.shedW)
+            || initialValidationSnapshot.shedW <= 0.0) {
+            std::string ignored;
+            disarmGovernor("validation boundary unavailable", &ignored);
+            writeAll(client, "ERROR live validation boundary is unavailable\n");
+            return;
+        }
+        {
+            std::ostringstream startedMessage;
+            startedMessage << std::fixed << std::setprecision(2)
+                           << "Whisper validation started; PDTR abort follows the live shed "
+                           << "threshold (" << initialValidationSnapshot.shedW
+                           << " W) / 95 C.\n";
+            writeAll(client, startedMessage.str());
+        }
         const double started = monotonicSeconds();
         double lastProgress = started;
         const uint64_t initialSMCError = smcErrorSerial_;
@@ -1783,15 +1799,41 @@ private:
                 terminateChild(child);
                 break;
             }
-            if (!armed_
-                || smcErrorSerial_ != initialSMCError
-                || raplErrorSerial_ != initialRAPLError
-                || latestInputW_ >= kHardCalibrationInputW
-                || !std::isfinite(latestCPUDieTemperatureC_)
-                || latestCPUDieTemperatureC_ >= kMaximumCPUTemperatureC
-                || now - started > 600.0) {
+            const PolicySnapshot validationSnapshot = policy_.snapshot();
+            bool boundaryViolation = false;
+            if (!armed_) {
+                error = "governor disarmed during validation";
+                boundaryViolation = true;
+            } else if (smcErrorSerial_ != initialSMCError) {
+                error = "SMC telemetry failed during validation";
+                boundaryViolation = true;
+            } else if (raplErrorSerial_ != initialRAPLError) {
+                error = "RAPL telemetry failed during validation";
+                boundaryViolation = true;
+            } else if (!validationSnapshot.ready
+                || !std::isfinite(validationSnapshot.shedW)
+                || validationSnapshot.shedW <= 0.0) {
+                error = "live validation boundary became unavailable";
+                boundaryViolation = true;
+            } else if (latestInputW_ >= validationSnapshot.shedW) {
+                std::ostringstream boundaryError;
+                boundaryError << std::fixed << std::setprecision(2)
+                              << "PDTR reached the live shed threshold ("
+                              << validationSnapshot.shedW << " W)";
+                error = boundaryError.str();
+                boundaryViolation = true;
+            } else if (!std::isfinite(latestCPUDieTemperatureC_)) {
+                error = "CPU temperature became invalid during validation";
+                boundaryViolation = true;
+            } else if (latestCPUDieTemperatureC_ >= kMaximumCPUTemperatureC) {
+                error = "CPU temperature reached the 95 C validation abort threshold";
+                boundaryViolation = true;
+            } else if (now - started > 600.0) {
+                error = "validation exceeded the 600 second timeout";
+                boundaryViolation = true;
+            }
+            if (boundaryViolation) {
                 failed = true;
-                error = "validation crossed a safety or telemetry boundary";
                 terminateChild(child);
                 break;
             }
